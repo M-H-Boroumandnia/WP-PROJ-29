@@ -1,7 +1,0 @@
-# Sonora planning / Codex handoff documents
-/AGENTS.md
-/docs/*.md
-/docs/*.txt
-/MANIFEST.txt
-**/.vite-cache/
-**/.pytest_cache/
