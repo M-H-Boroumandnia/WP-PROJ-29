@@ -27,7 +27,7 @@ import {
   Trash2,
   X,
 } from "lucide-react";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import { PlaylistCollage } from "../../components/CoverArt";
@@ -128,17 +128,19 @@ export function PlaylistPage() {
   const navigate = useNavigate();
   const me = useSession()!;
   useDatabaseVersion();
+  useEffect(() => {
+    if (!playlistId) return;
+    void repository.loadPlaylistData?.(playlistId);
+  }, [playlistId]);
   const playlist = repository.playlist(playlistId);
   const tracks = repository.tracks();
   const db = repository.database();
   const replace = usePlayer((s) => s.replaceContext);
   const [editing, setEditing] = useState(false);
   const [deleting, setDeleting] = useState(false);
-  const [title, setTitle] = useState(playlist?.title ?? "");
-  const [description, setDescription] = useState(playlist?.description ?? "");
-  const [visibility, setVisibility] = useState<"private" | "public">(
-    playlist?.visibility ?? "private",
-  );
+  const [title, setTitle] = useState("");
+  const [description, setDescription] = useState("");
+  const [visibility, setVisibility] = useState<"private" | "public">("private");
   const sensors = useSensors(
     useSensor(PointerSensor),
     useSensor(KeyboardSensor, {
@@ -167,8 +169,21 @@ export function PlaylistPage() {
         playlist.trackIds.indexOf(String(over.id)),
       );
   };
+  const openEdit = () => {
+    setTitle(playlist.title);
+    setDescription(playlist.description);
+    setVisibility(playlist.visibility);
+    setEditing(true);
+  };
+  const closeEdit = () => setEditing(false);
   const save = () => {
-    repository.updatePlaylist(playlist.id, { title, description, visibility });
+    const nextTitle = title.trim();
+    if (!nextTitle) return;
+    repository.updatePlaylist(playlist.id, {
+      title: nextTitle,
+      description: description.trim(),
+      visibility,
+    });
     setEditing(false);
   };
   return (
@@ -182,18 +197,7 @@ export function PlaylistPage() {
           <span className="eyebrow">
             {t("playlist")} · {t(playlist.visibility)}
           </span>
-          {editing ? (
-            <input
-              id="playlist-edit-title"
-              name="title"
-              className="title-input"
-              value={title}
-              onChange={(e) => setTitle(e.target.value)}
-              aria-label={t("playlistName")}
-            />
-          ) : (
-            <h1>{playlist.title}</h1>
-          )}
+          <h1>{playlist.title}</h1>
           <Link
             to={
               owner.artistProfile
@@ -230,10 +234,7 @@ export function PlaylistPage() {
               {t("tracks")}
             </button>
             <div className="detail-actions-end">
-              <button
-                className="button ghost"
-                onClick={() => setEditing(!editing)}
-              >
+              <button className="button ghost" onClick={openEdit}>
                 <Pencil />
                 {t("edit")}
               </button>
@@ -257,36 +258,6 @@ export function PlaylistPage() {
         )}
       </div>
       {!own && <p className="notice-line">{t("liveReference")}</p>}
-      {editing && (
-        <div className="edit-panel">
-          <label htmlFor="playlist-edit-description">
-            {t("description")}
-            <textarea
-              id="playlist-edit-description"
-              name="description"
-              value={description}
-              onChange={(e) => setDescription(e.target.value)}
-            />
-          </label>
-          <label htmlFor="playlist-edit-visibility">
-            {t("visibility")}
-            <select
-              id="playlist-edit-visibility"
-              name="visibility"
-              value={visibility}
-              onChange={(e) =>
-                setVisibility(e.target.value as typeof visibility)
-              }
-            >
-              <option value="private">{t("private")}</option>
-              <option value="public">{t("public")}</option>
-            </select>
-          </label>
-          <button className="button primary" onClick={save}>
-            {t("save")}
-          </button>
-        </div>
-      )}
       {playlistTracks.length ? (
         own ? (
           <>
@@ -347,6 +318,83 @@ export function PlaylistPage() {
           title={t("playlistEmpty")}
           body={t("playlistEmptyBody")}
         />
+      )}
+      {editing && (
+        <div
+          className="modal-backdrop"
+          onClick={closeEdit}
+          role="presentation"
+        >
+          <div
+            className="modal playlist-edit-modal"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="edit-playlist-title"
+            onClick={(event) => event.stopPropagation()}
+          >
+            <div className="modal-head">
+              <div>
+                <span className="eyebrow">{t("playlist")}</span>
+                <h2 id="edit-playlist-title">{t("edit")}</h2>
+              </div>
+              <button
+                className="icon-button"
+                onClick={closeEdit}
+                aria-label={t("close")}
+              >
+                <X />
+              </button>
+            </div>
+            <div className="playlist-edit-fields">
+              <label htmlFor="playlist-edit-title">
+                {t("playlistName")}
+                <input
+                  id="playlist-edit-title"
+                  name="title"
+                  value={title}
+                  onChange={(e) => setTitle(e.target.value)}
+                  autoFocus
+                />
+              </label>
+              <label htmlFor="playlist-edit-description">
+                {t("description")}
+                <textarea
+                  id="playlist-edit-description"
+                  name="description"
+                  value={description}
+                  onChange={(e) => setDescription(e.target.value)}
+                  rows={4}
+                />
+              </label>
+              <label htmlFor="playlist-edit-visibility">
+                {t("visibility")}
+                <select
+                  id="playlist-edit-visibility"
+                  name="visibility"
+                  value={visibility}
+                  onChange={(e) =>
+                    setVisibility(e.target.value as typeof visibility)
+                  }
+                >
+                  <option value="private">{t("private")}</option>
+                  <option value="public">{t("public")}</option>
+                </select>
+              </label>
+            </div>
+            <div className="modal-actions">
+              <button className="button ghost" onClick={closeEdit}>
+                {t("cancel")}
+              </button>
+              <button
+                className="button primary"
+                onClick={save}
+                disabled={!title.trim()}
+              >
+                {t("save")}
+              </button>
+            </div>
+          </div>
+        </div>
       )}
       {deleting && (
         <div

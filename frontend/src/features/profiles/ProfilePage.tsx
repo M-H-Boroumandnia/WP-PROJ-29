@@ -18,7 +18,7 @@ import { Link, useNavigate, useParams } from "react-router-dom";
 import { EmptyState } from "../../components/EmptyState";
 import { MediaCard } from "../../components/MediaCard";
 import { Section } from "../../components/Section";
-import { canEditAvatar, localDay } from "../../domain/entitlements";
+import { canEditAvatar } from "../../domain/entitlements";
 import type { User } from "../../domain/types";
 import { repository } from "../../repositories/localRepository";
 import { useDatabaseVersion, useSession } from "../../store/session";
@@ -26,27 +26,7 @@ import { uiError } from "../shared/errors";
 
 const PROFILE_IMAGE_MAX_BYTES = 50 * 1024 * 1024;
 const PROFILE_IMAGE_TYPES = ["image/jpeg", "image/png", "image/webp"];
-const DEMO_WEEK_BARS = [44, 71, 36, 82, 54, 94, 63];
 type ConnectionsTab = "followers" | "following";
-
-function dayKey(timezone: string, daysAgo: number): string {
-  const date = new Date();
-  date.setDate(date.getDate() - daysAgo);
-  return localDay(timezone, date);
-}
-
-function listeningStreak(
-  streamDates: Record<string, string>,
-  timezone: string,
-): number {
-  const days = new Set(Object.values(streamDates));
-  let streak = 0;
-  for (let ago = 0; ago < 365; ago += 1) {
-    if (!days.has(dayKey(timezone, ago))) break;
-    streak += 1;
-  }
-  return streak;
-}
 
 function normalizeUsername(value: string) {
   return value.trim().toLowerCase().replace(/^@/, "");
@@ -129,6 +109,20 @@ export function ProfilePage({
   );
 
   useEffect(() => {
+    if (!message && !error) return;
+    const timer = window.setTimeout(() => {
+      setMessage("");
+      setError("");
+    }, 4200);
+    return () => window.clearTimeout(timer);
+  }, [message, error]);
+
+  useEffect(() => {
+    if (!username) return;
+    void repository.loadProfileData?.(username);
+  }, [username]);
+
+  useEffect(() => {
     if (!result) return;
     setDisplayNameDraft(result.user.displayName);
     setUsernameDraft(result.user.username);
@@ -176,54 +170,46 @@ export function ProfilePage({
       </div>
     );
 
-  const { user, profile, playlists } = result;
+  const { user: profileUser, profile, playlists } = result;
+  const user =
+    profileUser.id === me.id
+      ? {
+          ...profileUser,
+          email: profileUser.email || me.email,
+          subscription: profileUser.subscription ?? me.subscription,
+          explicitContentEnabled:
+            profileUser.explicitContentEnabled ?? me.explicitContentEnabled,
+          notificationPreference: me.notificationPreference,
+          locale: profileUser.locale || me.locale,
+          timezone: profileUser.timezone || me.timezone,
+          theme: profileUser.theme || me.theme,
+          birthDate: profileUser.birthDate || me.birthDate,
+          streamDates: me.streamDates,
+          listeningStats: profileUser.listeningStats ?? me.listeningStats,
+          likedTrackIds: me.likedTrackIds,
+          savedPlaylistIds: me.savedPlaylistIds,
+          recentlyPlayedIds: me.recentlyPlayedIds,
+          recentlyPlayedPlaylistIds: me.recentlyPlayedPlaylistIds,
+        }
+      : profileUser;
   const artist = user.artistProfile;
   const followers = resolvePeople(user.followerIds, db.users);
   const followingPeople = resolvePeople(user.followingIds, db.users);
-  const releases = artist
-    ? db.releases.filter(
-        (release) =>
-          release.ownerUserId === user.id && release.status === "published",
-      )
-    : [];
   const own = user.id === me.id;
-  const today = localDay(user.timezone);
-  const streamedEntries = Object.entries(user.streamDates);
-  const liveDailyStreams = streamedEntries.filter(
-    ([, day]) => day === today,
-  ).length;
-  const liveStreak = listeningStreak(user.streamDates, user.timezone);
-  const liveWeekBars = Array.from({ length: 7 }, (_, index) => {
-    const day = dayKey(user.timezone, 6 - index);
-    return Object.values(user.streamDates).filter((value) => value === day)
-      .length;
-  });
-  const liveWeekMax = Math.max(...liveWeekBars, 1);
-  const hasLiveStats = streamedEntries.length > 0;
-  const minutesListened = hasLiveStats
-    ? Math.max(
-        186,
-        Math.round(
-          streamedEntries.reduce((sum, [trackId, day]) => {
-            const inWeek = Array.from({ length: 7 }, (_, index) =>
-              dayKey(user.timezone, index),
-            ).includes(day);
-            if (!inWeek) return sum;
-            const track = db.tracks.find((item) => item.id === trackId);
-            return sum + (track?.durationSeconds ?? 180);
-          }, 0) / 60,
-        ),
-      )
-    : 186;
-  const dailyStreams = hasLiveStats ? Math.max(liveDailyStreams, 12) : 12;
-  const streak = hasLiveStats ? Math.max(liveStreak, 8) : 8;
-  const weekBars = hasLiveStats
-    ? liveWeekBars.map((count) =>
-        Math.max(18, Math.round((count / liveWeekMax) * 94)),
-      )
-    : DEMO_WEEK_BARS;
+  const stats = own
+    ? (user.listeningStats ?? {
+        minutesListened: 0,
+        dailyStreams: 0,
+        listeningStreak: 0,
+        weekBars: [0, 0, 0, 0, 0, 0, 0],
+      })
+    : null;
+  const minutesListened = stats?.minutesListened ?? 0;
+  const dailyStreams = stats?.dailyStreams ?? 0;
+  const streak = stats?.listeningStreak ?? 0;
+  const weekBars = stats?.weekBars ?? [0, 0, 0, 0, 0, 0, 0];
   const weekMax = Math.max(...weekBars, 1);
-  const canChangeAvatar = own && canEditAvatar(user.subscription.tier);
+  const canChangeAvatar = own && canEditAvatar(me.subscription.tier);
   const personalDirty =
     displayNameDraft.trim() !== user.displayName ||
     normalizeUsername(usernameDraft) !== user.username;
@@ -402,7 +388,11 @@ export function ProfilePage({
                 <i
                   key={index}
                   style={{
-                    height: `${Math.max(18, (count / weekMax) * 100)}%`,
+                    height: `${
+                      count <= 0
+                        ? 8
+                        : Math.max(18, Math.round((count / weekMax) * 100))
+                    }%`,
                   }}
                 />
               ))}
@@ -430,9 +420,26 @@ export function ProfilePage({
       )}
 
       {(message || error) && (
-        <div className={`notice-line ${error ? "is-error" : ""}`}>
-          {error ? <X /> : <Check />}
-          {error || message}
+        <div
+          className={`app-toast ${error ? "is-error" : "is-success"}`}
+          role={error ? "alert" : "status"}
+          aria-live="polite"
+        >
+          <span className="app-toast-icon">
+            {error ? <X /> : <Check />}
+          </span>
+          <p>{error || message}</p>
+          <button
+            type="button"
+            className="app-toast-close"
+            aria-label={t("close")}
+            onClick={() => {
+              setMessage("");
+              setError("");
+            }}
+          >
+            <X />
+          </button>
         </div>
       )}
 
@@ -582,22 +589,7 @@ export function ProfilePage({
           </div>
           <div>
             <Headphones />
-            <strong>
-              {releases
-                .reduce(
-                  (sum, release) =>
-                    sum +
-                    release.trackIds.reduce(
-                      (n, id) =>
-                        n +
-                        (db.tracks.find((track) => track.id === id)
-                          ?.streamCount ?? 0),
-                      0,
-                    ),
-                  0,
-                )
-                .toLocaleString()}
-            </strong>
+            <strong>{user.followerIds.length.toLocaleString()}</strong>
             <span>{t("streams")}</span>
           </div>
           <div>
@@ -606,30 +598,6 @@ export function ProfilePage({
             <span>{t("artistMetrics")}</span>
           </div>
         </div>
-      )}
-
-      {artist && (
-        <Section title={t("releases")}>
-          {releases.length ? (
-            <div className="media-rail">
-              {releases.map((release) => (
-                <MediaCard
-                  key={release.id}
-                  title={release.title}
-                  subtitle={`${t(release.type)} · ${release.genre}`}
-                  coverUrl={release.coverUrl}
-                  href={`/release/${release.id}`}
-                />
-              ))}
-            </div>
-          ) : (
-            <EmptyState
-              icon={Headphones}
-              title={t("noPublishedCatalog")}
-              body={t("verificationJourney")}
-            />
-          )}
-        </Section>
       )}
 
       <Section title={t("publicPlaylists")}>
@@ -648,8 +616,7 @@ export function ProfilePage({
                 subtitle={t("tracksCount", { count: playlist.trackIds.length })}
                 collageUrls={playlist.trackIds.map(
                   (id) =>
-                    db.tracks.find((track) => track.id === id)?.coverUrl ??
-                    null,
+                    db.tracks.find((track) => track.id === id)?.coverUrl ?? null,
                 )}
                 href={`/playlist/${playlist.id}`}
               />

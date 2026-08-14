@@ -1,4 +1,5 @@
 import { ArrowRight, Sparkles } from "lucide-react";
+import { useEffect } from "react";
 import { useTranslation } from "react-i18next";
 import { Link } from "react-router-dom";
 import { CoverArt } from "../../components/CoverArt";
@@ -18,6 +19,10 @@ export function HomePage() {
   const db = repository.database();
   const tracks = repository.tracks();
   const replace = usePlayer((s) => s.replaceContext);
+
+  useEffect(() => {
+    void repository.loadCatalogData?.();
+  }, []);
   const hour = new Date().getHours();
   const greeting =
     hour < 12

@@ -56,6 +56,25 @@ const persist = (
     volume: state.volume,
   });
 
+export const hydratePlayerQueue = () => {
+  const queue = repository.queue();
+  const current = usePlayer.getState();
+  const keepPlaying =
+    current.isPlaying &&
+    queue.trackIds.length > 0 &&
+    queue.currentIndex >= 0;
+  usePlayer.setState({
+    trackIds: queue.trackIds,
+    currentIndex: queue.currentIndex,
+    repeatMode: queue.repeatMode,
+    shuffleEnabled: queue.shuffleEnabled,
+    volume: queue.volume,
+    ...(keepPlaying
+      ? {}
+      : { isPlaying: false, position: 0, duration: 0 }),
+  });
+};
+
 export const usePlayer = create<PlayerState>((set, get) => ({
   ...persisted,
   isPlaying: false,
@@ -163,9 +182,7 @@ export const usePlayer = create<PlayerState>((set, get) => ({
           currentIndex = Math.floor(Math.random() * state.trackIds.length);
         } while (currentIndex === state.currentIndex);
       } else if (state.currentIndex + 1 < state.trackIds.length) currentIndex++;
-      else if (reason !== "ended" || state.repeatMode === "all")
-        currentIndex = 0;
-      else return { isPlaying: false, position: 0 };
+      else currentIndex = 0;
       const selected = state.trackIds[currentIndex];
       repository.recordRecentlyPlayed(selected);
       persist({ ...state, currentIndex });
@@ -173,6 +190,7 @@ export const usePlayer = create<PlayerState>((set, get) => ({
         currentIndex,
         position: 0,
         isPlaying: true,
+        playbackNonce: state.playbackNonce + 1,
         toast: reason === "failure" ? "unavailableSkipped" : "queueAdvanced",
       };
     }),
@@ -181,7 +199,12 @@ export const usePlayer = create<PlayerState>((set, get) => ({
       if (state.position > 3) return { position: 0 };
       const currentIndex = Math.max(0, state.currentIndex - 1);
       persist({ ...state, currentIndex });
-      return { currentIndex, position: 0, isPlaying: true };
+      return {
+        currentIndex,
+        position: 0,
+        isPlaying: true,
+        playbackNonce: state.playbackNonce + 1,
+      };
     }),
   togglePlay: () =>
     set((state) => ({ isPlaying: !state.isPlaying, gestureRequired: false })),

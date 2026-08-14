@@ -1,11 +1,25 @@
 import { Navigate, Outlet } from "react-router-dom";
-import { useSession } from "../store/session";
+import { useAuthReady, useSession } from "../store/session";
+
+function AuthPending() {
+  return (
+    <div className="auth-pending" role="status" aria-live="polite">
+      Loading…
+    </div>
+  );
+}
 
 export function RequireAuth() {
-  return useSession() ? <Outlet /> : <Navigate to="/login" replace />;
+  const ready = useAuthReady();
+  const user = useSession();
+  if (!ready) return <AuthPending />;
+  return user ? <Outlet /> : <Navigate to="/login" replace />;
 }
 export function GuestOnly() {
-  return useSession() ? <Navigate to="/" replace /> : <Outlet />;
+  const ready = useAuthReady();
+  const user = useSession();
+  if (!ready) return <AuthPending />;
+  return user ? <Navigate to="/" replace /> : <Outlet />;
 }
 export function ArtistOnly() {
   const user = useSession();

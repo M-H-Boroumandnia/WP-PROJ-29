@@ -1,5 +1,5 @@
 import { LibraryBig, Plus } from "lucide-react";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { EmptyState } from "../../components/EmptyState";
 import { MediaCard } from "../../components/MediaCard";
@@ -15,6 +15,10 @@ export function LibraryPage() {
   const db = repository.database();
   const { owned, saved } = repository.library();
   const [managing, setManaging] = useState(false);
+
+  useEffect(() => {
+    void repository.loadLibraryData();
+  }, []);
 
   return (
     <div className="page library-page">

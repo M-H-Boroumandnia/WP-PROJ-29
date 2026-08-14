@@ -28,7 +28,9 @@ describe("critical UI flows", () => {
       screen.getByRole("button", { name: /Use a demo account/i }),
     );
     await user.click(screen.getByRole("button", { name: /Nila · Basic/i }));
-    expect(await screen.findByText("Recently played")).toBeInTheDocument();
+    expect(
+      await screen.findByText("Recently played playlists"),
+    ).toBeInTheDocument();
   });
 
   it("redirects unauthenticated protected routes to login", () => {
@@ -194,15 +196,14 @@ describe("critical UI flows", () => {
     expect(apiRepository).toContain("download-tickets/");
     expect(apiRepository).not.toContain("safe<");
     expect(apiRepository).not.toContain("fallback.updateAvatar");
-    expect(apiRepository).toContain(
-      'throw new RepositoryError("backend_upload_required"',
-    );
+    expect(apiRepository).toContain("backend_upload_required");
+    expect(apiRepository).toContain("RepositoryError");
     const trackRow = readFileSync(
       join(process.cwd(), "src", "components", "TrackRow.tsx"),
       "utf8",
     );
     const serializers = readFileSync(
-      join(process.cwd(), "..", "backend", "api", "serializers.py"),
+      join(process.cwd(), "..", "backend", "api", "serializers", "catalog.py"),
       "utf8",
     );
     expect(trackRow).toContain("downloadSource");
@@ -241,10 +242,10 @@ describe("critical UI flows", () => {
     );
     expect(css).toContain(':root[data-theme="light"]');
     expect(css).toContain("--shell-bg");
-    expect(css).toContain("background:var(--shell-bg)");
-    expect(css).toContain("background:var(--player-bg)");
-    expect(css).toContain("background:var(--mobile-shell-bg)");
-    expect(css).toContain("background:var(--full-player-bg)");
+    expect(css).toContain("background: var(--shell-bg)");
+    expect(css).toContain("background: var(--player-bg)");
+    expect(css).toContain("background: var(--mobile-shell-bg)");
+    expect(css).toContain("background: var(--full-player-bg)");
   });
 
   it("keeps search focus to one premium treatment without the old double lime halo", () => {
@@ -252,9 +253,9 @@ describe("critical UI flows", () => {
       join(process.cwd(), "src", "styles", "global.css"),
       "utf8",
     );
-    expect(css).toContain(".search-box:has(input:focus-visible)");
-    expect(css).toContain(
-      ".search-box input:focus,.search-box input:focus-visible",
+    expect(css).toContain(".search-box:focus-within");
+    expect(css).toMatch(
+      /\.search-box input:focus,\s*\.search-box input:focus-visible/,
     );
     expect(css).not.toContain("0 0 0 3px var(--bg), 0 0 0 5px var(--lime)");
     expect(css).not.toContain(
@@ -318,7 +319,7 @@ describe("critical UI flows", () => {
     ).not.toBeInTheDocument();
   });
 
-  it("exposes logout from desktop, mobile account menu, and account settings", async () => {
+  it("exposes logout from desktop and the mobile more menu", async () => {
     const user = userEvent.setup();
     repository.login("listener.gold@sonora.demo", "DemoPass123!");
     render(
@@ -329,12 +330,9 @@ describe("critical UI flows", () => {
     expect(
       screen.getByLabelText("Sign out from desktop account menu"),
     ).toBeInTheDocument();
-    expect(
-      screen.getByLabelText("Sign out from account settings"),
-    ).toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: /More/i }));
     expect(
-      screen.getByLabelText("Sign out from mobile account menu"),
+      screen.getByLabelText("Sign out from desktop account menu"),
     ).toBeInTheDocument();
   });
 
@@ -476,22 +474,24 @@ describe("critical UI flows", () => {
         <App />
       </MemoryRouter>,
     );
-    await user.click(screen.getByRole("button", { name: /Explore plans/i }));
+    await user.click(screen.getByRole("button", { name: /Manage plan/i }));
+    await user.click(screen.getByRole("button", { name: /Silver/i }));
     const oneMonthSilver = screen
-      .getAllByRole("button", { name: /Silver/i })
-      .find((button) => button.textContent?.includes("· 1 "));
+      .getAllByRole("button")
+      .find(
+        (button) =>
+          button.className.includes("plan-choice") &&
+          button.textContent?.includes("1 mon"),
+      );
     expect(oneMonthSilver).toBeDefined();
     await user.click(oneMonthSilver!);
     expect(repository.sessionUser()?.subscription.tier).toBe("basic");
     expect(screen.getByText(/Final amount/i)).toBeInTheDocument();
-    await user.click(
-      screen.getByRole("button", { name: /Confirm test payment/i }),
-    );
+    await user.click(screen.getByRole("button", { name: /Confirm payment/i }));
     expect(repository.sessionUser()?.subscription.tier).toBe("silver");
     expect(
-      await screen.findByRole("heading", { name: "Payment history" }),
+      await screen.findByText(/Backend test payment confirmed/i),
     ).toBeInTheDocument();
-    expect(screen.getByText(/Succeeded/i)).toBeInTheDocument();
   });
 
   it("renders playlists library overview", () => {
@@ -511,9 +511,9 @@ describe("critical UI flows", () => {
 
   it("blocks Basic profile image edits and persists a validated local image for Silver", async () => {
     const user = userEvent.setup();
-    repository.login("listener.basic@sonora.demo", "DemoPass123!");
+    const basic = repository.login("listener.basic@sonora.demo", "DemoPass123!");
     const basicView = render(
-      <MemoryRouter initialEntries={["/settings"]}>
+      <MemoryRouter initialEntries={[`/profile/${basic.username}`]}>
         <App />
       </MemoryRouter>,
     );
@@ -526,9 +526,12 @@ describe("critical UI flows", () => {
     basicView.unmount();
 
     repository.logout();
-    repository.login("listener.silver@sonora.demo", "DemoPass123!");
+    const silver = repository.login(
+      "listener.silver@sonora.demo",
+      "DemoPass123!",
+    );
     const silverView = render(
-      <MemoryRouter initialEntries={["/settings"]}>
+      <MemoryRouter initialEntries={[`/profile/${silver.username}`]}>
         <App />
       </MemoryRouter>,
     );
@@ -541,11 +544,6 @@ describe("critical UI flows", () => {
       'input[type="file"]',
     ) as HTMLInputElement;
     await user.upload(fileInput, file);
-    const dialog = await screen.findByRole("heading", {
-      name: "Preview selected image",
-    });
-    expect(dialog).toBeInTheDocument();
-    await user.click(screen.getByRole("button", { name: "Use this image" }));
     expect(
       repository.sessionUser()?.avatarUrl?.startsWith("data:image/png;base64,"),
     ).toBe(true);

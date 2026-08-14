@@ -74,3 +74,12 @@ export const finalPriceRial = (
   discountPercent: number,
 ): number =>
   Math.round(monthlyPriceRial * months * (1 - discountPercent / 100));
+
+export const rewardAmountRial = (
+  uniqueListeners: number,
+  validStreams: number,
+): number => {
+  const toman =
+    Math.round((uniqueListeners * 150 + validStreams * 25) / 1000) * 1000;
+  return toman * 10;
+};

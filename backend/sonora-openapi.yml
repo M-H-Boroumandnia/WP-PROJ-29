@@ -45,39 +45,6 @@ paths:
       responses:
         '200':
           description: No response body
-  /api/v1/admin/releases/{id}/archive/:
-    post:
-      operationId: v1_admin_releases_archive_create
-      parameters:
-      - in: path
-        name: id
-        schema:
-          type: string
-          format: uuid
-        required: true
-      tags:
-      - v1
-      requestBody:
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/Release'
-          application/x-www-form-urlencoded:
-            schema:
-              $ref: '#/components/schemas/Release'
-          multipart/form-data:
-            schema:
-              $ref: '#/components/schemas/Release'
-        required: true
-      security:
-      - jwtAuth: []
-      responses:
-        '200':
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Release'
-          description: ''
   /api/v1/admin/reports/overview/:
     get:
       operationId: v1_admin_reports_overview_retrieve
@@ -560,6 +527,20 @@ paths:
               schema:
                 $ref: '#/components/schemas/Me'
           description: ''
+  /api/v1/me/preferences/:
+    get:
+      operationId: v1_me_preferences_retrieve
+      tags:
+      - v1
+      security:
+      - jwtAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MePreferences'
+          description: ''
   /api/v1/me/delete/:
     post:
       operationId: v1_me_delete_create
@@ -627,6 +608,20 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/Notification'
+          description: ''
+  /api/v1/notifications/unread-count/:
+    get:
+      operationId: v1_notifications_unread_count_retrieve
+      tags:
+      - v1
+      security:
+      - jwtAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/NotificationUnreadCount'
           description: ''
   /api/v1/notifications/{id}/:
     post:
@@ -1402,11 +1397,18 @@ paths:
               schema:
                 $ref: '#/components/schemas/Room'
           description: ''
-  /api/v1/search/:
+  /api/v1/people/:
     get:
-      operationId: v1_search_retrieve
+      operationId: v1_people_retrieve
+      description: Public people and artists for Discover. Catalog is served by /tracks/, /releases/, and /playlists/.
       tags:
       - v1
+      parameters:
+      - in: query
+        name: q
+        schema:
+          type: string
+        required: false
       security:
       - jwtAuth: []
       responses:
@@ -1414,7 +1416,19 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/Track'
+                type: object
+                properties:
+                  people:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/PublicProfile'
+                  artists:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/PublicProfile'
+                required:
+                - people
+                - artists
           description: ''
   /api/v1/subscription/:
     get:
@@ -1601,59 +1615,6 @@ paths:
         required: true
       tags:
       - v1
-      security:
-      - jwtAuth: []
-      responses:
-        '200':
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Ticket'
-          description: ''
-  /api/v1/tickets/{id}/claim/:
-    get:
-      operationId: v1_tickets_claim_retrieve
-      parameters:
-      - in: path
-        name: id
-        schema:
-          type: string
-          format: uuid
-        required: true
-      tags:
-      - v1
-      security:
-      - jwtAuth: []
-      responses:
-        '200':
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Ticket'
-          description: ''
-    post:
-      operationId: v1_tickets_claim_create
-      parameters:
-      - in: path
-        name: id
-        schema:
-          type: string
-          format: uuid
-        required: true
-      tags:
-      - v1
-      requestBody:
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/Ticket'
-          application/x-www-form-urlencoded:
-            schema:
-              $ref: '#/components/schemas/Ticket'
-          multipart/form-data:
-            schema:
-              $ref: '#/components/schemas/Ticket'
-        required: true
       security:
       - jwtAuth: []
       responses:
@@ -2012,27 +1973,6 @@ components:
           readOnly: true
         kind:
           type: string
-        followerCount:
-          type: integer
-          readOnly: true
-        followingCount:
-          type: integer
-          readOnly: true
-        isFollowing:
-          type: boolean
-          readOnly: true
-        publicPlaylistCount:
-          type: integer
-          readOnly: true
-        email:
-          type: string
-          format: email
-        birthDate:
-          type: string
-          format: date
-        gender:
-          type: string
-          nullable: true
         locale:
           type: string
         timezone:
@@ -2041,8 +1981,9 @@ components:
           type: string
         explicitContentEnabled:
           type: boolean
-        notificationPreference:
+        birthDate:
           type: string
+          format: date
         subscription:
           type: object
           additionalProperties: {}
@@ -2052,76 +1993,48 @@ components:
           additionalProperties: {}
           nullable: true
           readOnly: true
-        password:
-          type: string
-          readOnly: true
-        followerIds:
-          type: array
-          items:
-            type: string
-          readOnly: true
-        followingIds:
-          type: array
-          items:
-            type: string
-          readOnly: true
-        likedTrackIds:
-          type: array
-          items:
-            type: string
-          readOnly: true
-        savedPlaylistIds:
-          type: array
-          items:
-            type: string
-          readOnly: true
-        recentlyPlayedIds:
-          type: array
-          items:
-            type: string
-          readOnly: true
-        streamDates:
-          type: object
-          additionalProperties:
-            type: string
-          readOnly: true
-        usernameChangedAt:
-          type: string
-          format: date-time
-          nullable: true
-        deletedAt:
-          type: string
-          format: date-time
-          nullable: true
       required:
       - artistProfile
       - avatarUrl
       - birthDate
-      - deletedAt
       - displayName
-      - email
       - explicitContentEnabled
-      - followerCount
-      - followerIds
-      - followingCount
-      - followingIds
-      - gender
       - id
-      - isFollowing
       - kind
-      - likedTrackIds
       - locale
-      - notificationPreference
-      - password
-      - publicPlaylistCount
-      - recentlyPlayedIds
-      - savedPlaylistIds
-      - streamDates
       - subscription
       - theme
       - timezone
       - username
-      - usernameChangedAt
+    MePreferences:
+      allOf:
+      - $ref: '#/components/schemas/Me'
+      - type: object
+        properties:
+          email:
+            type: string
+            format: email
+          gender:
+            type: string
+            nullable: true
+          notificationPreference:
+            type: string
+          usernameChangedAt:
+            type: string
+            format: date-time
+            nullable: true
+        required:
+        - email
+        - gender
+        - notificationPreference
+        - usernameChangedAt
+    NotificationUnreadCount:
+      type: object
+      properties:
+        unreadCount:
+          type: integer
+      required:
+      - unreadCount
     Notification:
       type: object
       properties:
@@ -2235,21 +2148,25 @@ components:
           items:
             type: string
           readOnly: true
-        savedPlaylistIds:
-          type: array
-          items:
-            type: string
-          readOnly: true
-        recentlyPlayedIds:
-          type: array
-          items:
-            type: string
-          readOnly: true
         streamDates:
           type: object
           additionalProperties:
             type: string
           readOnly: true
+        listeningStats:
+          type: object
+          readOnly: true
+          properties:
+            minutesListened:
+              type: integer
+            dailyStreams:
+              type: integer
+            listeningStreak:
+              type: integer
+            weekBars:
+              type: array
+              items:
+                type: integer
         usernameChangedAt:
           type: string
           format: date-time
@@ -2846,10 +2763,6 @@ components:
           type: string
           nullable: true
           readOnly: true
-        audioUrl:
-          type: string
-          nullable: true
-          readOnly: true
         artists:
           type: array
           items:
@@ -2887,12 +2800,15 @@ components:
         isLiked:
           type: boolean
           readOnly: true
+        hasAudio:
+          type: boolean
+          readOnly: true
       required:
       - artists
-      - audioUrl
       - coverUrl
       - durationSeconds
       - genre
+      - hasAudio
       - id
       - isExplicit
       - isGoldEarlyAccess

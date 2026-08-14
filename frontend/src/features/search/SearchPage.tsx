@@ -1,5 +1,5 @@
 import { BadgeCheck, Search as SearchIcon, UserRound } from "lucide-react";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { Link } from "react-router-dom";
 import { MediaCard } from "../../components/MediaCard";
@@ -20,6 +20,11 @@ export function SearchPage() {
     "all",
   );
   const [genre, setGenre] = useState("all");
+
+  useEffect(() => {
+    void repository.loadCatalogData?.();
+    void repository.loadSearchData();
+  }, []);
   const needle = query.toLowerCase().trim();
   const includes = (value: string) =>
     !needle || value.toLowerCase().includes(needle);
@@ -31,7 +36,9 @@ export function SearchPage() {
           includes(track.artists.map((a) => a.stageName).join(" ")) ||
           includes(track.genre)) &&
         (genre === "all" || track.genre === genre) &&
-        (sort !== "liked" || user.likedTrackIds.includes(track.id)),
+        (sort !== "liked" ||
+          track.isLiked ||
+          user.likedTrackIds.includes(track.id)),
     )
     .sort((a, b) => {
       if (sort === "liked") {

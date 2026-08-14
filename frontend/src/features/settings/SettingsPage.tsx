@@ -13,7 +13,7 @@ import {
 } from "lucide-react";
 import { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { useNavigate } from "react-router-dom";
+import { useNavigate, useSearchParams } from "react-router-dom";
 import type { SubscriptionPlan } from "../../domain/types";
 import { locales } from "../../i18n";
 import { repository } from "../../repositories/localRepository";
@@ -25,6 +25,7 @@ type PlanTierTab = "silver" | "gold";
 export function SettingsPage() {
   const { t, i18n } = useTranslation();
   const navigate = useNavigate();
+  const [searchParams, setSearchParams] = useSearchParams();
   const user = useSession()!;
   useDatabaseVersion();
   const db = repository.database();
@@ -33,16 +34,67 @@ export function SettingsPage() {
   );
 
   const [message, setMessage] = useState("");
+  const [error, setError] = useState("");
   const [plansOpen, setPlansOpen] = useState(false);
   const [checkoutPlan, setCheckoutPlan] = useState<string | null>(null);
   const [checkoutMessage, setCheckoutMessage] = useState("");
   const [planTierOpen, setPlanTierOpen] = useState<PlanTierTab>("gold");
+  const [zarinpalEnabled, setZarinpalEnabled] = useState(false);
   const selectedPlan =
     db.plans.find((plan) => plan.id === checkoutPlan) ?? null;
 
   useEffect(() => {
+    void repository.loadSettingsData();
+  }, []);
+
+  useEffect(() => {
+    if (!usesApi) return;
+    const apiBase =
+      import.meta.env.VITE_SONORA_API_BASE?.replace(/\/$/, "") || "/api/v1";
+    void fetch(`${apiBase}/subscription/payment-config/`)
+      .then((response) => (response.ok ? response.json() : null))
+      .then((payload: { zarinpalEnabled?: boolean } | null) => {
+        if (payload) setZarinpalEnabled(Boolean(payload.zarinpalEnabled));
+      })
+      .catch(() => setZarinpalEnabled(false));
+  }, [usesApi]);
+
+  useEffect(() => {
+    const payment = searchParams.get("payment");
+    if (!payment) return;
+    const refresh =
+      typeof (repository as { refreshSession?: () => Promise<unknown> })
+        .refreshSession === "function"
+        ? (repository as { refreshSession: () => Promise<unknown> }).refreshSession()
+        : Promise.resolve();
+    if (payment === "success") {
+      setMessage(t("paymentSuccess"));
+      setError("");
+      void refresh.then(() => repository.loadSettingsData());
+    } else if (payment === "failed") {
+      setError(t("paymentFailed"));
+      setMessage("");
+      void refresh.then(() => repository.loadSettingsData());
+    }
+    const next = new URLSearchParams(searchParams);
+    next.delete("payment");
+    next.delete("paymentId");
+    next.delete("reason");
+    setSearchParams(next, { replace: true });
+  }, [searchParams, setSearchParams, t]);
+
+  useEffect(() => {
     document.documentElement.dataset.theme = user.theme;
   }, [user.theme]);
+
+  useEffect(() => {
+    if (!message && !error) return;
+    const timer = window.setTimeout(() => {
+      setMessage("");
+      setError("");
+    }, 3200);
+    return () => window.clearTimeout(timer);
+  }, [message, error]);
 
   const setLanguage = (locale: typeof user.locale) => {
     repository.updateSettings({ locale });
@@ -76,6 +128,7 @@ export function SettingsPage() {
     if (!plan) return t("checkoutSelectPlan");
     if (user.subscription.tier === "silver" && plan.tier === "gold")
       return t("silverToGoldWarning");
+    if (zarinpalEnabled) return t("zarinpalCheckoutConsequence");
     if (user.subscription.tier === "basic") return t("basicToPaidConsequence");
     return t("paidSwitchConsequence");
   };
@@ -91,10 +144,24 @@ export function SettingsPage() {
       return;
     }
     Promise.resolve(repository.purchase(selectedPlan.id))
-      .then(() => {
+      .then((payment) => {
+        if (
+          payment &&
+          typeof payment === "object" &&
+          "paymentUrl" in payment &&
+          payment.paymentUrl
+        ) {
+          // Browser navigates to Zarinpal; stay on the confirm step until return.
+          return;
+        }
+        if (zarinpalEnabled) {
+          setCheckoutMessage(t("paymentFailed"));
+          return;
+        }
         setCheckoutPlan(null);
         setPlansOpen(false);
         setCheckoutMessage("");
+        setError("");
         setMessage(t("checkoutComplete"));
       })
       .catch((reason) => setCheckoutMessage(uiError(reason, t)));
@@ -104,7 +171,10 @@ export function SettingsPage() {
     if (!confirm(t("deleteWarning"))) return;
     Promise.resolve(repository.deleteAccount())
       .then(() => navigate("/login"))
-      .catch((reason) => setMessage(uiError(reason, t)));
+      .catch((reason) => {
+        setMessage("");
+        setError(uiError(reason, t));
+      });
   };
 
   return (
@@ -112,10 +182,27 @@ export function SettingsPage() {
       <header className="page-heading">
         <h1>{t("settingsTitle")}</h1>
       </header>
-      {message && (
-        <div className="notice-line">
-          <Check />
-          {message}
+      {(message || error) && (
+        <div
+          className={`app-toast ${error ? "is-error" : "is-success"}`}
+          role={error ? "alert" : "status"}
+          aria-live="polite"
+        >
+          <span className="app-toast-icon">
+            {error ? <X /> : <Check />}
+          </span>
+          <p>{error || message}</p>
+          <button
+            type="button"
+            className="app-toast-close"
+            aria-label={t("close")}
+            onClick={() => {
+              setMessage("");
+              setError("");
+            }}
+          >
+            <X />
+          </button>
         </div>
       )}
 
@@ -447,7 +534,7 @@ export function SettingsPage() {
                   onClick={purchase}
                   disabled={!selectedPlan || Boolean(isBlocked(selectedPlan))}
                 >
-                  {t("confirmDemoCheckout")}
+                  {t(zarinpalEnabled ? "confirmZarinpalCheckout" : "confirmDemoCheckout")}
                 </button>
               </section>
             </div>

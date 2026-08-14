@@ -34,6 +34,13 @@ export interface ArtistProfile {
   genre: string;
 }
 
+export interface ListeningStats {
+  minutesListened: number;
+  dailyStreams: number;
+  listeningStreak: number;
+  weekBars: number[];
+}
+
 export interface User {
   id: string;
   email: string;
@@ -58,6 +65,8 @@ export interface User {
   recentlyPlayedIds: string[];
   recentlyPlayedPlaylistIds: string[];
   streamDates: Record<string, string>;
+  listeningStats?: ListeningStats;
+  unreadNotificationCount?: number;
   usernameChangedAt: string | null;
   deletedAt: string | null;
 }
@@ -87,6 +96,7 @@ export interface Track {
   title: string;
   coverUrl: string | null;
   audioUrl: string;
+  hasAudio?: boolean;
   artists: ArtistCredit[];
   releaseTitle: string;
   durationSeconds: number;
@@ -158,6 +168,18 @@ export interface VerificationRequest {
   reason: string | null;
   createdAt: string;
   decidedAt: string | null;
+  artistName?: string;
+  username?: string;
+  displayName?: string;
+  email?: string;
+  avatarUrl?: string | null;
+  bio?: string;
+  genre?: string;
+  birthDate?: string | null;
+  gender?: string | null;
+  locale?: string;
+  timezone?: string;
+  accountCreatedAt?: string;
 }
 
 export interface TicketMessage {
@@ -204,9 +226,53 @@ export interface AuditEvent {
 export interface Payout {
   id: string;
   artistUserId: string;
+  artistName?: string;
+  username?: string;
+  uniqueListeners?: number;
+  validStreams?: number;
   amountRial: number;
-  status: "pending" | "settled";
+  status: "pending" | "settled" | "none";
   period: string;
+}
+
+export interface AdminReports {
+  period: string;
+  timezone: string;
+  subscriptions: number;
+  subscriptionMix: { tier: "basic" | "silver" | "gold"; count: number }[];
+  revenueRial: number;
+  monthRevenueRial: number;
+  revenueByMonth: { period: string; revenueRial: number }[];
+  pendingPayoutsRial: number;
+  validStreams: number;
+}
+
+export interface ArtistAnalytics {
+  streams: number;
+  tracks: number;
+  releases: number;
+  uniqueListeners: number;
+  rewardRial: number;
+  paidRial: number;
+  unpaidRial: number;
+  period: string;
+  verified: boolean;
+  streamsByRelease: {
+    id: string;
+    title: string;
+    streams: number;
+    uniqueListeners: number;
+    rewardRial: number;
+    trackCount: number;
+  }[];
+  topTracks: {
+    id: string;
+    title: string;
+    releaseTitle: string;
+    coverUrl: string | null;
+    streamCount: number;
+    uniqueListenerCount: number;
+  }[];
 }
 
 export interface Payment {
@@ -221,6 +287,7 @@ export interface Payment {
   provider: "demo" | "mock" | "zarinpal";
   status: "pending" | "succeeded" | "failed";
   createdAt: string;
+  paymentUrl?: string | null;
 }
 
 export interface QueueState {
@@ -291,6 +358,7 @@ export interface Database {
   payouts: Payout[];
   payments: Payment[];
   drafts: DraftRelease[];
+  adminReports: AdminReports | null;
 }
 
 export interface RegistrationInput {

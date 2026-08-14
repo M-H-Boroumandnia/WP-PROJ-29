@@ -55,3 +55,14 @@ Object.defineProperty(window, "matchMedia", {
     removeEventListener: vi.fn(),
   })),
 });
+
+class ResizeObserverStub {
+  observe() {}
+  unobserve() {}
+  disconnect() {}
+}
+Object.defineProperty(globalThis, "ResizeObserver", {
+  configurable: true,
+  writable: true,
+  value: ResizeObserverStub,
+});

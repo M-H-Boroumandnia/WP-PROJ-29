@@ -1,5 +1,5 @@
-import { finalPriceRial, localDay } from "../domain/entitlements";
-import type { Database, Release, SubscriptionPlan, Track, User } from "../domain/types";
+import { finalPriceRial, localDay, rewardAmountRial } from "../domain/entitlements";
+import type { Database, Payout, Release, SubscriptionPlan, Track, User } from "../domain/types";
 
 const demoStreamDates = (timezone = "Asia/Tehran"): Record<string, string> => {
   const day = (ago: number) => {
@@ -25,7 +25,7 @@ const demoStreamDates = (timezone = "Asia/Tehran"): Record<string, string> => {
 };
 
 const now = "2026-07-06T08:00:00.000Z";
-const future = "2026-08-01T00:00:00.000Z";
+const future = "2027-08-01T00:00:00.000Z";
 const password = "DemoPass123!";
 
 const subscription = (tier: "basic" | "silver" | "gold") => ({
@@ -166,7 +166,7 @@ const plan = (tier: "silver" | "gold", months: 1 | 3 | 6 | 12, discount: number)
 };
 
 export const createSeedDatabase = (): Database => ({
-  version: 8,
+  version: 9,
   users: [basic, silver, gold, unverified, verified, artist2, artist3, artist4, listener1, listener2, listener3, support, admin],
   tracks: seedTracks,
   releases: seedReleases,
@@ -192,9 +192,31 @@ export const createSeedDatabase = (): Database => ({
     { id: "audit-1", actorId: "user-support", action: "verification.approved", target: "verify-2", before: "pending", after: "approved", createdAt: "2025-01-14T10:00:00.000Z", requestId: "req-demo-1" },
     { id: "audit-2", actorId: "user-admin", action: "plan.updated", target: "plan-gold-12", before: "20%", after: "18%", createdAt: "2026-06-01T08:00:00.000Z", requestId: "req-demo-2" },
   ],
-  payouts: [{ id: "payout-1", artistUserId: verified.id, amountRial: 48_600_000, status: "pending", period: "2026-06" }],
+  payouts: [verified, artist2, artist3, artist4].map((user): Payout => {
+    const owned = seedReleases.filter(
+      (release) => release.ownerUserId === user.id && release.status !== "archived",
+    );
+    const tracks = seedTracks.filter((track) =>
+      owned.some((release) => release.trackIds.includes(track.id)),
+    );
+    const uniqueListeners = tracks.reduce((sum, track) => sum + track.uniqueListenerCount, 0);
+    const validStreams = tracks.reduce((sum, track) => sum + track.streamCount, 0);
+    const amountRial = rewardAmountRial(uniqueListeners, validStreams);
+    return {
+      id: `payout-${user.id}`,
+      artistUserId: user.id,
+      artistName: user.artistProfile!.stageName,
+      username: user.username,
+      uniqueListeners,
+      validStreams,
+      amountRial,
+      status: amountRial > 0 ? "pending" : "none",
+      period: new Date().toISOString().slice(0, 7),
+    };
+  }),
   payments: [],
   drafts: [],
+  adminReports: null,
 });
 
 export const DEMO_PASSWORD = password;

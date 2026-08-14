@@ -5,14 +5,18 @@ import {
   getTrackLock,
   localDay,
   playlistLimit,
+  rewardAmountRial,
 } from "../domain/entitlements";
 import type {
+  AdminReports,
   Database,
   DraftRelease,
+  ListeningStats,
   Locale,
   Notification,
   Playlist,
   PublicProfile,
+  Payout,
   QueueState,
   RegistrationInput,
   SubscriptionPlan,
@@ -26,7 +30,7 @@ import { RepositoryError } from "./errors";
 export { RepositoryError } from "./errors";
 
 const DB_KEY = "sonora:phase1:database:v7";
-const SEED_VERSION = 8;
+const SEED_VERSION = 9;
 const SESSION_KEY = "sonora:phase1:session";
 const QUEUE_KEY = "sonora:phase1:queue";
 const listeners = new Set<() => void>();
@@ -60,6 +64,108 @@ const save = (db: Database) => {
   localStorage.setItem(DB_KEY, JSON.stringify(db));
   revision += 1;
   listeners.forEach((listener) => listener());
+};
+
+const reportingPeriod = () => new Date().toISOString().slice(0, 7);
+
+const artistCatalogTotals = (db: Database, ownerId: string) => {
+  const owned = db.releases.filter(
+    (release) =>
+      release.ownerUserId === ownerId && release.status !== "archived",
+  );
+  const tracks = db.tracks.filter((track) =>
+    owned.some((release) => release.trackIds.includes(track.id)),
+  );
+  return {
+    owned,
+    tracks,
+    uniqueListeners: tracks.reduce(
+      (sum, track) => sum + track.uniqueListenerCount,
+      0,
+    ),
+    validStreams: tracks.reduce((sum, track) => sum + track.streamCount, 0),
+  };
+};
+
+const buildArtistLedger = (db: Database): Payout[] => {
+  const period = reportingPeriod();
+  return db.users
+    .filter((user) => user.artistProfile?.verifiedAt)
+    .map((user) => {
+      const { uniqueListeners, validStreams } = artistCatalogTotals(
+        db,
+        user.id,
+      );
+      const existing = db.payouts.find(
+        (payout) => payout.artistUserId === user.id && payout.period === period,
+      );
+      return {
+        id: existing?.id ?? `ledger-${user.id}-${period}`,
+        artistUserId: user.id,
+        artistName: user.artistProfile!.stageName,
+        username: user.username,
+        uniqueListeners,
+        validStreams,
+        amountRial:
+          existing?.status === "settled"
+            ? existing.amountRial
+            : rewardAmountRial(uniqueListeners, validStreams),
+        status:
+          existing?.status === "settled"
+            ? "settled"
+            : rewardAmountRial(uniqueListeners, validStreams) > 0
+              ? (existing?.status ?? "pending")
+              : "none",
+        period,
+      };
+    });
+};
+
+const buildAdminReports = (db: Database): AdminReports => {
+  const mix = { basic: 0, silver: 0, gold: 0 };
+  const active = db.users.filter(
+    (user) => !user.deletedAt && user.subscription.status === "active",
+  );
+  active.forEach((user) => {
+    mix[user.subscription.tier] += 1;
+  });
+  const period = reportingPeriod();
+  const succeeded = db.payments.filter(
+    (payment) => payment.status === "succeeded",
+  );
+  const buckets = new Map<string, number>();
+  succeeded.forEach((payment) => {
+    const key = payment.createdAt.slice(0, 7);
+    buckets.set(key, (buckets.get(key) ?? 0) + payment.finalPriceRial);
+  });
+  const [year, month] = period.split("-").map(Number);
+  const revenueByMonth = Array.from({ length: 6 }, (_, index) => {
+    const shifted = year * 12 + (month - 1) - (5 - index);
+    const key = `${Math.floor(shifted / 12).toString().padStart(4, "0")}-${String((shifted % 12) + 1).padStart(2, "0")}`;
+    return { period: key, revenueRial: buckets.get(key) ?? 0 };
+  });
+  return {
+    period,
+    timezone: "Asia/Tehran",
+    subscriptions: active.length,
+    subscriptionMix: [
+      { tier: "basic", count: mix.basic },
+      { tier: "silver", count: mix.silver },
+      { tier: "gold", count: mix.gold },
+    ],
+    revenueRial: succeeded.reduce(
+      (sum, payment) => sum + payment.finalPriceRial,
+      0,
+    ),
+    monthRevenueRial: succeeded
+      .filter((payment) => payment.createdAt.slice(0, 7) === period)
+      .reduce((sum, payment) => sum + payment.finalPriceRial, 0),
+    revenueByMonth,
+    pendingPayoutsRial: db.payouts
+      .filter((payout) => payout.status === "pending" && payout.amountRial > 0)
+      .reduce((sum, payout) => sum + payout.amountRial, 0),
+    validStreams: db.tracks.reduce((sum, track) => sum + track.streamCount, 0),
+  };
 };
 
 const current = (db = load()): User => {
@@ -102,6 +208,50 @@ const usernameFrom = (displayName: string, users: User[]): string => {
   return candidate;
 };
 
+const dayKeyFor = (timezone: string, daysAgo: number, now = new Date()) => {
+  const date = new Date(now);
+  date.setDate(date.getDate() - daysAgo);
+  return localDay(timezone, date);
+};
+
+const computeListeningStats = (
+  user: User,
+  tracks: { id: string; durationSeconds: number }[],
+  now = new Date(),
+): ListeningStats => {
+  const entries = Object.entries(user.streamDates);
+  const today = localDay(user.timezone, now);
+  const days = new Set(Object.values(user.streamDates));
+  let listeningStreak = 0;
+  for (let ago = 0; ago < 365; ago += 1) {
+    if (!days.has(dayKeyFor(user.timezone, ago, now))) break;
+    listeningStreak += 1;
+  }
+  const weekBars = Array.from({ length: 7 }, (_, index) => {
+    const day = dayKeyFor(user.timezone, 6 - index, now);
+    return Object.values(user.streamDates).filter((value) => value === day)
+      .length;
+  });
+  const weekDays = new Set(
+    Array.from({ length: 7 }, (_, index) =>
+      dayKeyFor(user.timezone, index, now),
+    ),
+  );
+  const minutesListened = Math.round(
+    entries.reduce((sum, [trackId, day]) => {
+      if (!weekDays.has(day)) return sum;
+      const track = tracks.find((item) => item.id === trackId);
+      return sum + (track?.durationSeconds ?? 180);
+    }, 0) / 60,
+  );
+  return {
+    minutesListened,
+    dailyStreams: entries.filter(([, day]) => day === today).length,
+    listeningStreak,
+    weekBars,
+  };
+};
+
 const publicProfile = (
   user: User,
   viewer: User | null,
@@ -129,6 +279,9 @@ export const localRepository = {
   revision(): number {
     return revision;
   },
+  authReady(): boolean {
+    return true;
+  },
   database(): Database {
     return structuredClone(load());
   },
@@ -141,7 +294,12 @@ export const localRepository = {
   },
   sessionUser(): User | null {
     try {
-      return structuredClone(current());
+      const db = load();
+      const user = current(db);
+      return structuredClone({
+        ...user,
+        listeningStats: computeListeningStats(user, db.tracks),
+      });
     } catch {
       return null;
     }
@@ -237,6 +395,27 @@ export const localRepository = {
       readAt: null,
       createdAt: new Date().toISOString(),
     });
+    if (artist && user.artistProfile) {
+      const stageName = user.artistProfile.stageName;
+      for (const staff of db.users.filter(
+        (candidate) =>
+          (candidate.kind === "support" || candidate.kind === "admin") &&
+          !candidate.deletedAt,
+      )) {
+        db.notifications.push({
+          id: id("notice"),
+          userId: staff.id,
+          title: "New artist registration",
+          body: `${stageName} joined Sonora and needs verification.`,
+          titleKey: "noticeArtistRegisteredTitle",
+          bodyKey: "noticeArtistRegisteredBody",
+          values: { name: stageName, email: user.email },
+          kind: "important",
+          readAt: null,
+          createdAt: new Date().toISOString(),
+        });
+      }
+    }
     save(db);
     localStorage.setItem(SESSION_KEY, user.id);
     revision += 1;
@@ -248,7 +427,11 @@ export const localRepository = {
   },
   profile(
     username: string,
-  ): { user: User; profile: PublicProfile; playlists: Playlist[] } | null {
+  ): {
+    user: User;
+    profile: PublicProfile;
+    playlists: Playlist[];
+  } | null {
     const db = load();
     const viewer = this.sessionUser();
     const user = db.users.find(
@@ -329,8 +512,13 @@ export const localRepository = {
     const db = load();
     const me = current(db);
     const day = localDay(me.timezone, now);
-    if (me.streamDates[trackId] === day) return false;
+    const track = db.tracks.find((item) => item.id === trackId);
+    if (!track) return false;
+    const firstEver = me.streamDates[trackId] === undefined;
     me.streamDates[trackId] = day;
+    track.streamCount += 1;
+    if (firstEver) track.uniqueListenerCount += 1;
+    me.listeningStats = computeListeningStats(me, db.tracks, now);
     save(db);
     return true;
   },
@@ -390,6 +578,12 @@ export const localRepository = {
     )
       return null;
     return structuredClone(playlist);
+  },
+  release(releaseId: string) {
+    const release = load().releases.find(
+      (item) => item.id === releaseId && item.status !== "archived",
+    );
+    return release ? structuredClone(release) : null;
   },
   createPlaylist(
     title: string,
@@ -667,7 +861,7 @@ export const localRepository = {
     revision += 1;
     listeners.forEach((listener) => listener());
   },
-  purchase(planId: string): void {
+  purchase(planId: string) {
     const db = load();
     const me = current(db);
     const plan = db.plans.find(
@@ -732,6 +926,7 @@ export const localRepository = {
       createdAt: starts.toISOString(),
     });
     save(db);
+    return db.payments[db.payments.length - 1];
   },
   verificationRequests(): VerificationRequest[] {
     return structuredClone(load().verificationRequests);
@@ -763,6 +958,24 @@ export const localRepository = {
       createdAt: new Date().toISOString(),
       decidedAt: null,
     });
+    const stageName = me.artistProfile.stageName;
+    for (const staff of db.users.filter(
+      (user) =>
+        (user.kind === "support" || user.kind === "admin") && !user.deletedAt,
+    )) {
+      db.notifications.push({
+        id: id("notice"),
+        userId: staff.id,
+        title: "Verification request pending",
+        body: `${stageName} submitted materials for review.`,
+        titleKey: "noticeVerificationPendingTitle",
+        bodyKey: "noticeVerificationPendingBody",
+        values: { name: stageName, note: note.slice(0, 160) },
+        kind: "important",
+        readAt: null,
+        createdAt: new Date().toISOString(),
+      });
+    }
     save(db);
   },
   decideVerification(
@@ -816,6 +1029,8 @@ export const localRepository = {
         "ticket_entitlement",
         "Silver, Gold, or verified artist access is required.",
       );
+    const preview =
+      body.trim().length > 160 ? `${body.trim().slice(0, 157)}...` : body.trim();
     db.tickets.push({
       id: id("ticket"),
       creatorId: me.id,
@@ -832,6 +1047,27 @@ export const localRepository = {
         },
       ],
     });
+    for (const staff of db.users.filter(
+      (user) =>
+        (user.kind === "support" || user.kind === "admin") && !user.deletedAt,
+    )) {
+      db.notifications.push({
+        id: id("notice"),
+        userId: staff.id,
+        title: "New support ticket",
+        body: `${me.displayName}: ${subject}`,
+        titleKey: "noticeTicketCreatedTitle",
+        bodyKey: "noticeTicketCreatedBody",
+        values: {
+          name: me.displayName,
+          subject,
+          preview,
+        },
+        kind: "important",
+        createdAt: new Date().toISOString(),
+        readAt: null,
+      });
+    }
     save(db);
   },
   replyTicket(ticketId: string, body: string): void {
@@ -846,17 +1082,35 @@ export const localRepository = {
       body,
       createdAt: new Date().toISOString(),
     });
-    if (me.kind !== "consumer") ticket.status = "answered";
-    save(db);
-  },
-  claimTicket(ticketId: string): void {
-    const db = load();
-    const me = current(db);
-    if (me.kind === "consumer")
-      throw new RepositoryError("forbidden", "Staff access required.");
-    const ticket = db.tickets.find((t) => t.id === ticketId);
-    if (ticket)
-      ticket.claimedById = ticket.claimedById === me.id ? null : me.id;
+    if (me.kind !== "consumer") {
+      ticket.status = "answered";
+    } else {
+      const preview =
+        body.trim().length > 160
+          ? `${body.trim().slice(0, 157)}...`
+          : body.trim();
+      for (const staff of db.users.filter(
+        (user) =>
+          (user.kind === "support" || user.kind === "admin") && !user.deletedAt,
+      )) {
+        db.notifications.push({
+          id: id("notice"),
+          userId: staff.id,
+          title: "Ticket reply",
+          body: `${me.displayName}: ${ticket.subject}`,
+          titleKey: "noticeTicketReplyTitle",
+          bodyKey: "noticeTicketReplyBody",
+          values: {
+            name: me.displayName,
+            subject: ticket.subject,
+            preview,
+          },
+          kind: "important",
+          createdAt: new Date().toISOString(),
+          readAt: null,
+        });
+      }
+    }
     save(db);
   },
   closeTicket(ticketId: string): void {
@@ -901,6 +1155,8 @@ export const localRepository = {
       throw new RepositoryError("forbidden", "Admin access required.");
     const payout = db.payouts.find((p) => p.id === payoutId);
     if (payout) payout.status = "settled";
+    db.payouts = buildArtistLedger(db);
+    db.adminReports = buildAdminReports(db);
     db.auditEvents.push({
       id: id("audit"),
       actorId: me.id,
@@ -913,28 +1169,7 @@ export const localRepository = {
     });
     save(db);
   },
-  moderateRelease(releaseId: string, reason: string): void {
-    const db = load();
-    const me = current(db);
-    if (me.kind !== "admin")
-      throw new RepositoryError("forbidden", "Admin access required.");
-    const release = db.releases.find((candidate) => candidate.id === releaseId);
-    if (!release) return;
-    const before = release.status;
-    release.status = "archived";
-    db.auditEvents.push({
-      id: id("audit"),
-      actorId: me.id,
-      action: "release.archived",
-      target: release.id,
-      before,
-      after: `archived: ${reason}`,
-      createdAt: new Date().toISOString(),
-      requestId: id("req"),
-    });
-    save(db);
-  },
-  saveDraft(draft: Omit<DraftRelease, "id" | "userId" | "createdAt">): void {
+    saveDraft(draft: Omit<DraftRelease, "id" | "userId" | "createdAt">): void {
     const db = load();
     const me = current(db);
     if (!me.artistProfile?.verifiedAt)
@@ -950,10 +1185,145 @@ export const localRepository = {
     });
     save(db);
   },
+  async saveRelease(
+    releaseId: string | null,
+    form: {
+      title: string;
+      type: "single" | "album";
+      genre: string;
+      year: number;
+      releaseDate: string;
+      collaborators: string;
+      earlyAccess: boolean;
+    },
+    tracks: {
+      id: string | null;
+      title: string;
+      lyrics: string;
+      audio: File | null;
+    }[],
+    cover: File | null,
+    removedTrackIds: string[] = [],
+  ): Promise<void> {
+    const db = load();
+    const me = current(db);
+    if (!me.artistProfile?.verifiedAt)
+      throw new RepositoryError(
+        "verified_required",
+        "Only verified artists can manage releases.",
+      );
+    if (!tracks.length)
+      throw new RepositoryError("invalid", "At least one track is required.");
+    const publicReleaseAt = form.releaseDate
+      ? new Date(form.releaseDate).toISOString()
+      : new Date(`${form.year}-01-01T00:00:00.000Z`).toISOString();
+    const credit = {
+      artistId: me.artistProfile.id,
+      username: me.username,
+      stageName: me.artistProfile.stageName,
+      role: "primary" as const,
+    };
+    void form.collaborators;
+
+    const ensureRelease = () => {
+      if (!releaseId) {
+        const created = {
+          id: id("release"),
+          type: form.type,
+          title: form.title,
+          coverUrl: cover ? URL.createObjectURL(cover) : null,
+          primaryArtist: credit,
+          publicReleaseAt,
+          isEarlyAccess: form.earlyAccess,
+          status: (form.earlyAccess ? "scheduled" : "published") as
+            | "scheduled"
+            | "published",
+          trackIds: [] as string[],
+          genre: form.genre,
+          ownerUserId: me.id,
+        };
+        db.releases.push(created);
+        return created;
+      }
+      const release = db.releases.find((candidate) => candidate.id === releaseId);
+      if (!release || release.ownerUserId !== me.id)
+        throw new RepositoryError(
+          "forbidden",
+          "Only the verified owning artist can edit this release.",
+        );
+      Object.assign(release, {
+        title: form.title,
+        type: form.type,
+        genre: form.genre,
+        publicReleaseAt,
+        isEarlyAccess: form.earlyAccess,
+        coverUrl: cover ? URL.createObjectURL(cover) : release.coverUrl,
+      });
+      return release;
+    };
+
+    const release = ensureRelease();
+    for (const trackId of removedTrackIds) {
+      db.tracks = db.tracks.filter((track) => track.id !== trackId);
+      release.trackIds = release.trackIds.filter((id) => id !== trackId);
+    }
+
+    const nextTrackIds: string[] = [];
+    for (const draft of tracks) {
+      if (draft.id) {
+        const existing = db.tracks.find((track) => track.id === draft.id);
+        if (!existing) continue;
+        existing.title = draft.title;
+        existing.lyrics = draft.lyrics || null;
+        existing.releaseTitle = release.title;
+        existing.genre = form.genre;
+        existing.publicReleaseAt = publicReleaseAt;
+        existing.isGoldEarlyAccess = form.earlyAccess;
+        existing.coverUrl = release.coverUrl;
+        if (draft.audio) existing.audioUrl = URL.createObjectURL(draft.audio);
+        nextTrackIds.push(existing.id);
+        continue;
+      }
+      if (!draft.audio)
+        throw new RepositoryError("audio_required", "Audio file is required.");
+      const trackId = id("track");
+      db.tracks.push({
+        id: trackId,
+        releaseId: release.id,
+        title: draft.title,
+        coverUrl: release.coverUrl,
+        audioUrl: URL.createObjectURL(draft.audio),
+        artists: [credit],
+        releaseTitle: release.title,
+        durationSeconds: 45,
+        isExplicit: false,
+        isGoldEarlyAccess: form.earlyAccess,
+        publicReleaseAt,
+        genre: form.genre,
+        lyrics: draft.lyrics || null,
+        streamCount: 0,
+        uniqueListenerCount: 0,
+      });
+      nextTrackIds.push(trackId);
+    }
+    release.trackIds = nextTrackIds;
+    save(db);
+  },
   updateRelease(
     releaseId: string,
-    patch: { title?: string; status?: "published" | "archived" },
-  ): void {
+    patch: {
+      title?: string;
+      genre?: string;
+      type?: "single" | "album";
+      publicReleaseAt?: string;
+      earlyAccess?: boolean;
+      status?: "published" | "archived" | "scheduled" | "draft";
+      lyrics?: string;
+      collaborators?: string;
+      cover?: File | null;
+      audio?: File | null;
+    },
+  ): void | Promise<void> {
     const db = load();
     const me = current(db);
     const release = db.releases.find((candidate) => candidate.id === releaseId);
@@ -966,12 +1336,24 @@ export const localRepository = {
         "forbidden",
         "Only the verified owning artist can edit this release.",
       );
-    Object.assign(release, patch);
-    if (patch.title)
-      release.trackIds.forEach((trackId) => {
-        const track = db.tracks.find((candidate) => candidate.id === trackId);
-        if (track) track.releaseTitle = patch.title!;
-      });
+    if (patch.status !== undefined) release.status = patch.status;
+    if (patch.title !== undefined) release.title = patch.title;
+    if (patch.genre !== undefined) release.genre = patch.genre;
+    if (patch.type !== undefined) release.type = patch.type;
+    if (patch.publicReleaseAt !== undefined)
+      release.publicReleaseAt = patch.publicReleaseAt;
+    if (patch.earlyAccess !== undefined)
+      release.isEarlyAccess = patch.earlyAccess;
+    if (patch.cover) release.coverUrl = URL.createObjectURL(patch.cover);
+    release.trackIds.forEach((trackId) => {
+      const track = db.tracks.find((candidate) => candidate.id === trackId);
+      if (!track) return;
+      if (patch.title) track.releaseTitle = patch.title;
+      track.coverUrl = release.coverUrl;
+    });
+    void patch.lyrics;
+    void patch.collaborators;
+    void patch.audio;
     save(db);
   },
   queue(): QueueState {
@@ -998,6 +1380,92 @@ export const localRepository = {
   },
   saveQueue(queue: QueueState): void {
     localStorage.setItem(QUEUE_KEY, JSON.stringify(queue));
+  },
+  loadSettingsData: async () => undefined,
+  loadLibraryData: async () => undefined,
+  loadProfileData: async (_username?: string) => undefined,
+  loadCatalogData: async () => undefined,
+  loadPlaylistData: async (_playlistId?: string) => undefined,
+  loadReleaseData: async (_releaseId?: string) => undefined,
+  loadTracksByIds: async (_ids?: string[], _options?: { deferMs?: number }) =>
+    undefined,
+  refreshSession: async () => undefined,
+  loadNotificationsData: async () => undefined,
+  refreshUnreadCount: async () => undefined,
+  loadTicketsData: async () => undefined,
+  loadSearchData: async () => undefined,
+  loadStudioData: async () => undefined,
+  loadSupportData: async () => undefined,
+  loadAdminData: async () => {
+    const db = load();
+    const userId = localStorage.getItem(SESSION_KEY);
+    const me = db.users.find(
+      (user) => user.id === userId && !user.deletedAt,
+    );
+    if (me?.kind !== "admin") return;
+    db.payouts = buildArtistLedger(db);
+    db.adminReports = buildAdminReports(db);
+    save(db);
+  },
+  async artistAnalytics() {
+    const db = load();
+    const me = current(db);
+    db.payouts = buildArtistLedger(db);
+    const { owned, tracks, uniqueListeners, validStreams } =
+      artistCatalogTotals(db, me.id);
+    const rewardRial = rewardAmountRial(uniqueListeners, validStreams);
+    const mine = db.payouts.filter((payout) => payout.artistUserId === me.id);
+    const paidRial = mine
+      .filter((payout) => payout.status === "settled")
+      .reduce((sum, payout) => sum + payout.amountRial, 0);
+    const unpaidRial = mine.some(
+      (payout) => payout.period === reportingPeriod() && payout.status === "settled",
+    )
+      ? 0
+      : rewardRial;
+    return {
+      streams: validStreams,
+      tracks: tracks.length,
+      releases: owned.length,
+      uniqueListeners,
+      rewardRial,
+      paidRial,
+      unpaidRial,
+      period: reportingPeriod(),
+      verified: Boolean(me.artistProfile?.verifiedAt),
+      streamsByRelease: owned.map((release) => {
+        const releaseTracks = tracks.filter((track) =>
+          release.trackIds.includes(track.id),
+        );
+        const listeners = releaseTracks.reduce(
+          (sum, track) => sum + track.uniqueListenerCount,
+          0,
+        );
+        const streams = releaseTracks.reduce(
+          (sum, track) => sum + track.streamCount,
+          0,
+        );
+        return {
+          id: release.id,
+          title: release.title,
+          streams,
+          uniqueListeners: listeners,
+          rewardRial: rewardAmountRial(listeners, streams),
+          trackCount: releaseTracks.length,
+        };
+      }),
+      topTracks: [...tracks]
+        .sort((left, right) => right.streamCount - left.streamCount)
+        .slice(0, 8)
+        .map((track) => ({
+          id: track.id,
+          title: track.title,
+          releaseTitle: track.releaseTitle,
+          coverUrl: track.coverUrl,
+          streamCount: track.streamCount,
+          uniqueListenerCount: track.uniqueListenerCount,
+        })),
+    };
   },
 };
 

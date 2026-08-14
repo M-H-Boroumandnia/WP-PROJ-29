@@ -59,6 +59,13 @@ export function Player() {
   );
 
   useEffect(() => {
+    if (!user) return;
+    if (!player.trackIds.length) return;
+    // Defer so profile/library/playlist can join the same /tracks/?ids= batch.
+    void repository.loadTracksByIds?.(player.trackIds, { deferMs: 220 });
+  }, [user, player.trackIds.join(",")]);
+
+  useEffect(() => {
     if (!track?.coverUrl) return;
     const fac = new FastAverageColor();
     fac
@@ -89,7 +96,20 @@ export function Player() {
 
   const seek = (value: number) => {
     const audio = document.querySelector("audio");
-    if (audio) audio.currentTime = value;
+    if (audio) {
+      const duration = Number.isFinite(audio.duration) ? audio.duration : value;
+      const nextTime = Math.min(Math.max(0, value), Math.max(0, duration));
+      try {
+        audio.currentTime = nextTime;
+      } catch {
+        // Some streams reject seeks until enough data is buffered.
+      }
+      if (player.isPlaying) {
+        void audio.play().catch(() => undefined);
+      }
+      player.setProgress(nextTime);
+      return;
+    }
     player.setProgress(value);
   };
   const previous = () => {
@@ -561,7 +581,14 @@ export function Player() {
       )}
       {player.toast && (
         <div className="toast" role="status">
-          {t(player.toast)}
+          {player.toast === "queueAdvanced" ? (
+            <>
+              <span className="toast-full">{t("queueAdvanced")}</span>
+              <span className="toast-short">{t("nextTrack")}</span>
+            </>
+          ) : (
+            t(player.toast)
+          )}
         </div>
       )}
     </>

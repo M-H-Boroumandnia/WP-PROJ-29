@@ -1,17 +1,16 @@
 import {
   Check,
-  ChevronDown,
+  ChevronRight,
   LockKeyhole,
   Plus,
   Send,
   TicketCheck,
   X,
 } from "lucide-react";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { EmptyState } from "../../components/EmptyState";
 import { canOpenTicket } from "../../domain/entitlements";
-import type { Ticket } from "../../domain/types";
 import { repository } from "../../repositories/localRepository";
 import { useDatabaseVersion, useSession } from "../../store/session";
 
@@ -32,11 +31,31 @@ export function TicketsPage() {
   const [creating, setCreating] = useState(false);
   const [subject, setSubject] = useState("");
   const [body, setBody] = useState("");
-  const [reply, setReply] = useState<Record<string, string>>({});
-  const [expandedClosedId, setExpandedClosedId] = useState<string | null>(null);
+  const [reply, setReply] = useState("");
+  const [selectedTicket, setSelectedTicket] = useState<string | null>(
+    tickets[0]?.id ?? null,
+  );
   const eligible = canOpenTicket(me);
-  const activeTickets = tickets.filter((ticket) => ticket.status !== "closed");
-  const closedTickets = tickets.filter((ticket) => ticket.status === "closed");
+  const ticket =
+    tickets.find((item) => item.id === selectedTicket) ?? tickets[0] ?? null;
+
+  useEffect(() => {
+    void repository.loadTicketsData();
+  }, []);
+
+  useEffect(() => {
+    if (!tickets.length) {
+      setSelectedTicket(null);
+      return;
+    }
+    if (!selectedTicket || !tickets.some((item) => item.id === selectedTicket)) {
+      setSelectedTicket(tickets[0].id);
+    }
+  }, [tickets, selectedTicket]);
+
+  useEffect(() => {
+    setReply("");
+  }, [selectedTicket]);
 
   const closeCreateModal = () => {
     setCreating(false);
@@ -50,43 +69,16 @@ export function TicketsPage() {
     closeCreateModal();
   };
 
-  const sendReply = (ticketId: string) => {
-    const text = reply[ticketId]?.trim();
-    if (!text) return;
-    repository.replyTicket(ticketId, text);
-    setReply({ ...reply, [ticketId]: "" });
+  const sendReply = () => {
+    if (!ticket || !reply.trim()) return;
+    repository.replyTicket(ticket.id, reply.trim());
+    setReply("");
   };
-
-  const toggleClosed = (ticketId: string) => {
-    setExpandedClosedId((current) => (current === ticketId ? null : ticketId));
-  };
-
-  const renderMessages = (ticket: Ticket) => (
-    <div className="messages">
-      {ticket.messages.map((message) => {
-        const own = message.authorId === me.id;
-        const author = db.users.find((user) => user.id === message.authorId);
-        return (
-          <div
-            className={`message ${own ? "own" : ""}`}
-            key={message.id}
-          >
-            <span>{author?.displayName}</span>
-            <p>{message.body}</p>
-            <time dateTime={message.createdAt}>
-              {formatMessageTime(message.createdAt)}
-            </time>
-          </div>
-        );
-      })}
-    </div>
-  );
 
   return (
     <div className="page tickets-page">
       <header className="page-heading with-action">
         <div>
-          <span className="eyebrow">{t("support")}</span>
           <h1>{t("tickets")}</h1>
         </div>
         {eligible ? (
@@ -110,98 +102,109 @@ export function TicketsPage() {
           </div>
         </div>
       )}
-      <div className="consumer-tickets">
-        {tickets.length ? (
-          <>
-            {activeTickets.map((ticket) => (
-              <article key={ticket.id}>
-                <header>
-                  <span className="ticket-icon" aria-hidden>
-                    <TicketCheck />
-                  </span>
-                  <div>
-                    <h2>{ticket.subject}</h2>
-                    <span className="ticket-meta">
-                      <span className={`ticket-status ${ticket.status}`}>
-                        {t(ticket.status)}
-                      </span>
-                      <span>
-                        {new Date(ticket.createdAt).toLocaleDateString()}
-                      </span>
-                    </span>
-                  </div>
-                  <button
-                    className="button ghost"
-                    onClick={() => repository.closeTicket(ticket.id)}
-                  >
-                    <Check />
-                    {t("close")}
-                  </button>
-                </header>
-                {renderMessages(ticket)}
+      {tickets.length ? (
+        <div className="ticket-layout">
+          <aside className="ticket-list" aria-label={t("tickets")}>
+            {tickets.map((item) => (
+              <button
+                type="button"
+                className={item.id === ticket?.id ? "active" : ""}
+                key={item.id}
+                onClick={() => setSelectedTicket(item.id)}
+              >
+                <span className={`status-dot ${item.status}`} />
+                <div>
+                  <strong>{item.subject}</strong>
+                  <small>
+                    {t(item.status)} ·{" "}
+                    {new Date(item.createdAt).toLocaleDateString()}
+                  </small>
+                </div>
+                <ChevronRight />
+              </button>
+            ))}
+          </aside>
+          {ticket ? (
+            <section className="ticket-thread">
+              <header>
+                <div className="ticket-thread-meta">
+                  <span className="eyebrow">#{ticket.id.slice(-6)}</span>
+                  <h2>{ticket.subject}</h2>
+                  <span>{t(ticket.status)}</span>
+                </div>
+                <div className="ticket-thread-actions">
+                  {ticket.status !== "closed" ? (
+                    <button
+                      className="button ghost"
+                      onClick={() => repository.closeTicket(ticket.id)}
+                    >
+                      <Check />
+                      {t("close")}
+                    </button>
+                  ) : null}
+                </div>
+              </header>
+              <div className="messages">
+                {ticket.messages.map((message) => {
+                  const own = message.authorId === me.id;
+                  const author = db.users.find(
+                    (user) => user.id === message.authorId,
+                  );
+                  return (
+                    <div
+                      className={`message ${own ? "own" : ""}`}
+                      key={message.id}
+                    >
+                      <span>{author?.displayName}</span>
+                      <p>{message.body}</p>
+                      <time dateTime={message.createdAt}>
+                        {formatMessageTime(message.createdAt)}
+                      </time>
+                    </div>
+                  );
+                })}
+              </div>
+              {ticket.status !== "closed" ? (
                 <form
                   className="message-compose"
                   onSubmit={(event) => {
                     event.preventDefault();
-                    sendReply(ticket.id);
+                    sendReply();
                   }}
                 >
-                  <input
+                  <textarea
                     id={`ticket-reply-${ticket.id}`}
                     name="reply"
-                    value={reply[ticket.id] ?? ""}
-                    onChange={(e) =>
-                      setReply({ ...reply, [ticket.id]: e.target.value })
-                    }
+                    value={reply}
+                    onChange={(e) => setReply(e.target.value)}
                     placeholder={t("writeReply")}
                     aria-label={t("writeReply")}
-                    autoComplete="off"
                   />
                   <button
                     className="button primary send-btn"
                     type="submit"
                     aria-label={t("send")}
-                    disabled={!reply[ticket.id]?.trim()}
+                    disabled={!reply.trim()}
                   >
                     <Send />
                   </button>
                 </form>
-              </article>
-            ))}
-            {closedTickets.map((ticket) => {
-              const expanded = expandedClosedId === ticket.id;
-              return (
-                <article
-                  key={ticket.id}
-                  className={`is-closed ${expanded ? "is-expanded" : ""}`}
-                >
-                  <button
-                    type="button"
-                    className="closed-ticket-toggle"
-                    aria-expanded={expanded}
-                    onClick={() => toggleClosed(ticket.id)}
-                  >
-                    <div>
-                      <h2>{ticket.subject}</h2>
-                      <span>
-                        {new Date(ticket.createdAt).toLocaleDateString()}
-                      </span>
-                    </div>
-                    <ChevronDown className="closed-chevron" />
-                  </button>
-                  {expanded && renderMessages(ticket)}
-                </article>
-              );
-            })}
-          </>
-        ) : (
-          <EmptyState
-            icon={TicketCheck}
-            title={t("noTickets")}
-            body={t("notificationEmptyBody")}
-          />
-        )}
-      </div>
+              ) : (
+                <div className="ticket-closed-note">
+                  <TicketCheck />
+                  <span>{t("closed")}</span>
+                </div>
+              )}
+            </section>
+          ) : null}
+        </div>
+      ) : (
+        <EmptyState
+          icon={TicketCheck}
+          title={t("noTickets")}
+          body={t("notificationEmptyBody")}
+        />
+      )}
       {creating && eligible && (
         <div
           className="modal-backdrop"

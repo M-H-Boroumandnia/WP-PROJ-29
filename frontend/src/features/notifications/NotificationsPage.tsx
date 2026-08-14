@@ -7,7 +7,7 @@ import {
   Trash2,
   UserPlus,
 } from "lucide-react";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { EmptyState } from "../../components/EmptyState";
 import type { Notification } from "../../domain/types";
@@ -27,6 +27,10 @@ export function NotificationsPage() {
   useDatabaseVersion();
   const notices = repository.notifications();
   const [expandedId, setExpandedId] = useState<string | null>(null);
+
+  useEffect(() => {
+    void repository.loadNotificationsData();
+  }, []);
   const text = (
     key: string | undefined,
     fallback: string,

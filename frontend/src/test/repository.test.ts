@@ -5,6 +5,7 @@ import {
   getTrackLock,
   localDay,
   playlistLimit,
+  rewardAmountRial,
 } from "../domain/entitlements";
 import type { RegistrationInput } from "../domain/types";
 import { RepositoryError, repository } from "../repositories/localRepository";
@@ -161,23 +162,28 @@ describe("local repository contract", () => {
     );
   });
 
-  it("counts a valid stream only once per local day", () => {
+  it("counts each valid stream listen and unique listeners once", () => {
     repository.login("listener.basic@sonora.demo", DEMO_PASSWORD);
     const date = new Date("2026-07-06T12:00:00Z");
+    const before = repository.tracks().find((track) => track.id === "track-1")!
+      .streamCount;
     expect(repository.recordValidStream("track-1", date)).toBe(true);
-    expect(repository.recordValidStream("track-1", date)).toBe(false);
+    expect(repository.recordValidStream("track-1", date)).toBe(true);
+    const track = repository.tracks().find((item) => item.id === "track-1")!;
+    expect(track.streamCount).toBe(before + 2);
   });
 
   it("applies the Basic 60-stream cap to new tracks", () => {
     repository.login("listener.basic@sonora.demo", DEMO_PASSWORD);
-    const raw = JSON.parse(localStorage.getItem("sonora:phase1:database:v2")!);
+    const raw = JSON.parse(localStorage.getItem("sonora:phase1:database:v7")!);
     const user = raw.users.find(
       (item: { id: string }) => item.id === "user-basic",
     );
     const day = localDay("Asia/Tehran");
+    user.streamDates = {};
     for (let index = 0; index < 60; index++)
       user.streamDates[`counted-${index}`] = day;
-    localStorage.setItem("sonora:phase1:database:v2", JSON.stringify(raw));
+    localStorage.setItem("sonora:phase1:database:v7", JSON.stringify(raw));
     const viewed = repository.tracks();
     expect(
       viewed.every(
@@ -200,7 +206,7 @@ describe("local repository contract", () => {
   it("collects notification overflow into a digest without silent loss", () => {
     repository.login("listener.gold@sonora.demo", DEMO_PASSWORD);
     repository.updateSettings({ notificationPreference: "max_five_daily" });
-    const raw = JSON.parse(localStorage.getItem("sonora:phase1:database:v2")!);
+    const raw = JSON.parse(localStorage.getItem("sonora:phase1:database:v7")!);
     for (let index = 0; index < 7; index++)
       raw.notifications.push({
         id: `overflow-${index}`,
@@ -211,7 +217,7 @@ describe("local repository contract", () => {
         readAt: null,
         createdAt: `2026-07-06T1${index}:00:00.000Z`,
       });
-    localStorage.setItem("sonora:phase1:database:v2", JSON.stringify(raw));
+    localStorage.setItem("sonora:phase1:database:v7", JSON.stringify(raw));
     const notices = repository.notifications();
     expect(notices.some((notice) => notice.id === "digest-2026-07-06")).toBe(
       true,
@@ -313,7 +319,7 @@ describe("local repository contract", () => {
       audioFileInfo: "demo.wav · audio/wav · 100 bytes",
       coverFileInfo: null,
     });
-    const raw = localStorage.getItem("sonora:phase1:database:v2")!;
+    const raw = localStorage.getItem("sonora:phase1:database:v7")!;
     expect(raw).toContain("demo.wav");
     expect(raw).not.toContain("blob:");
   });
@@ -341,5 +347,61 @@ describe("local repository contract", () => {
     repository.login("listener.gold@sonora.demo", DEMO_PASSWORD);
     expect(repository.profile("novaserein")).toBeNull();
     expect(repository.playlist("playlist-1")).toBeNull();
+  });
+
+  it("rounds artist rewards to thousand toman then stores rial", () => {
+    expect(rewardAmountRial(0, 0)).toBe(0);
+    expect(rewardAmountRial(3, 24)).toBe(10_000);
+    expect(rewardAmountRial(8_800, 24_800)).toBe(19_400_000);
+  });
+
+  it("builds admin accounting from the artist reward formula", async () => {
+    repository.login("admin@sonora.demo", DEMO_PASSWORD);
+    await repository.loadAdminData();
+    const nova = repository
+      .database()
+      .payouts.find((payout) => payout.username === "novaserein");
+    expect(nova).toBeDefined();
+    expect(nova?.uniqueListeners).toBeGreaterThan(0);
+    expect(nova?.validStreams).toBeGreaterThan(0);
+    expect(nova?.amountRial).toBe(
+      rewardAmountRial(nova!.uniqueListeners!, nova!.validStreams!),
+    );
+    const reports = repository.database().adminReports;
+    expect(reports?.timezone).toBe("Asia/Tehran");
+    expect(reports?.subscriptionMix.map((row) => row.tier)).toEqual([
+      "basic",
+      "silver",
+      "gold",
+    ]);
+    expect(reports?.subscriptions).toBeGreaterThan(0);
+    repository.settlePayout(nova!.id);
+    expect(
+      repository.database().payouts.find((payout) => payout.id === nova!.id)
+        ?.status,
+    ).toBe("settled");
+    expect(
+      repository
+        .database()
+        .payouts.filter((payout) => payout.status === "pending")
+        .every((payout) => payout.amountRial > 0),
+    ).toBe(true);
+    expect(
+      repository
+        .database()
+        .payouts.filter((payout) => payout.amountRial === 0)
+        .every((payout) => payout.status === "none"),
+    ).toBe(true);
+  });
+
+  it("includes monthly reward on artist analytics", async () => {
+    repository.login("artist.verified@sonora.demo", DEMO_PASSWORD);
+    const stats = await repository.artistAnalytics();
+    expect(stats.rewardRial).toBe(
+      rewardAmountRial(stats.uniqueListeners, stats.streams),
+    );
+    expect(stats.unpaidRial).toBe(stats.rewardRial);
+    expect(stats.paidRial).toBe(0);
+    expect(stats.streamsByRelease[0]?.rewardRial).toBeGreaterThanOrEqual(0);
   });
 });

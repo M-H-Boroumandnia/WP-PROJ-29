@@ -1,0 +1,37 @@
+[tool.ruff]
+target-version = "py312"
+line-length = 100
+src = ["."]
+exclude = [
+  ".venv",
+  "venv",
+  "migrations",
+  "media",
+]
+
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"
+line-ending = "auto"
+docstring-code-format = true
+
+[tool.ruff.lint]
+select = [
+  "E",   # pycodestyle errors
+  "F",   # pyflakes
+  "I",   # isort
+  "UP",  # pyupgrade
+  "B",   # bugbear
+]
+ignore = [
+  "E501",  # line length handled by formatter
+  "B904",  # raise from — noisy for existing views
+]
+
+[tool.ruff.lint.isort]
+known-first-party = ["accounts", "billing", "catalog", "core", "notifications", "playlists", "rooms", "sonora", "support"]
+
+[tool.pytest.ini_options]
+DJANGO_SETTINGS_MODULE = "sonora.settings"
+python_files = ["tests.py", "test_*.py", "*_tests.py"]
+addopts = "--reuse-db"

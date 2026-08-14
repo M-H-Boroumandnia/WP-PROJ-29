@@ -24,11 +24,13 @@ export function ParticipantOrbit({
           }
           key={participant.userId}
         >
-          {participant.avatarUrl ? (
-            <img src={participant.avatarUrl} alt={participant.displayName} />
-          ) : (
-            participant.displayName.slice(0, 1)
-          )}
+          <span className="participant-orbit-avatar">
+            {participant.avatarUrl ? (
+              <img src={participant.avatarUrl} alt={participant.displayName} />
+            ) : (
+              participant.displayName.slice(0, 1)
+            )}
+          </span>
           {participant.isHost && <Crown />}
           {participant.accessState !== "playable" && <LockKeyhole />}
         </span>

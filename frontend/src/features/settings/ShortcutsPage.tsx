@@ -1,4 +1,3 @@
-import { Command } from "lucide-react";
 import { useTranslation } from "react-i18next";
 
 export function ShortcutsPage() {
@@ -13,14 +12,12 @@ export function ShortcutsPage() {
     ["?", "shortcutHelp"],
   ];
   return (
-    <div className="page narrow-page">
+    <div className="page settings-page shortcuts-page">
       <header className="page-heading">
-        <span className="eyebrow">{t("keyboardHelp")}</span>
         <h1>{t("shortcuts")}</h1>
       </header>
       <div className="shortcut-card">
         <div className="shortcut-head">
-          <Command />
           <span>{t("key")}</span>
           <span>{t("action")}</span>
         </div>

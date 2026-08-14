@@ -15,14 +15,17 @@ import {
   Users,
   X,
 } from "lucide-react";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { NavLink, Outlet, useLocation, useNavigate } from "react-router-dom";
 import { Logo } from "../components/Logo";
 import { OfflineBanner } from "../components/OfflineBanner";
 import { Player } from "../features/player/Player";
 import { repository } from "../repositories/localRepository";
-import { useDatabaseVersion, useSession } from "../store/session";
+import { hydratePlayerQueue } from "../store/player";
+import { useAuthReady, useDatabaseVersion, useSession } from "../store/session";
+
+let unreadPath = "";
 
 const NavItem = ({
   to,
@@ -52,14 +55,34 @@ const NavItem = ({
 export function AppShell() {
   const { t, i18n } = useTranslation();
   const user = useSession()!;
+  const authReady = useAuthReady();
   useDatabaseVersion();
   const navigate = useNavigate();
   const location = useLocation();
   const [moreOpen, setMoreOpen] = useState(false);
   const [logoutOpen, setLogoutOpen] = useState(false);
+  const hydratedUserId = useRef<string | null>(null);
+  useEffect(() => {
+    if (!authReady || !user.id) return;
+    if (hydratedUserId.current === user.id) return;
+    hydratedUserId.current = user.id;
+    hydratePlayerQueue();
+  }, [authReady, user.id]);
   useEffect(() => {
     setMoreOpen(false);
   }, [location.pathname]);
+  useEffect(() => {
+    if (unreadPath === location.pathname) return;
+    unreadPath = location.pathname;
+    if (location.pathname === "/notifications") return;
+    void repository.refreshUnreadCount?.();
+  }, [location.pathname]);
+  useEffect(() => {
+    const timer = window.setInterval(() => {
+      void repository.refreshUnreadCount?.();
+    }, 30_000);
+    return () => window.clearInterval(timer);
+  }, []);
   useEffect(() => {
     if (i18n.language !== user.locale) void i18n.changeLanguage(user.locale);
   }, [i18n, user.locale]);
@@ -78,9 +101,7 @@ export function AppShell() {
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   }, [moreOpen]);
-  const unread = repository
-    .notifications()
-    .filter((notice) => !notice.readAt).length;
+  const unread = user.unreadNotificationCount ?? 0;
   const isArtist = Boolean(user.artistProfile);
   const isStaff = user.kind === "support" || user.kind === "admin";
   const closeMore = () => setMoreOpen(false);
@@ -152,10 +173,8 @@ export function AppShell() {
         )}
         {(isArtist || isStaff) && (
           <>
-            <span className="nav-label">
-              {isArtist ? t("artist") : t("supportRole")}
-            </span>
-            <nav>
+            {isArtist && <span className="nav-label">{t("artist")}</span>}
+            <nav aria-label={isStaff ? t("support") : t("artist")}>
               {isArtist && (
                 <NavItem
                   to="/studio"

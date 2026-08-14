@@ -10,11 +10,44 @@ function isBenignPlayError(error: unknown) {
   );
 }
 
+type PlaybackGrant = {
+  streamUrl: string;
+  playbackSessionId: string;
+};
+
+type PlaybackReporter = {
+  recordPlaybackProgress?: (
+    trackId: string,
+    positionSeconds: number,
+    options: { finalize?: boolean; playbackSessionId: string },
+  ) => void | Promise<unknown>;
+  playbackSource?: (
+    trackId: string,
+    options?: { force?: boolean },
+  ) => Promise<PlaybackGrant | string>;
+};
+
+function grantFromSource(source: PlaybackGrant | string): {
+  streamUrl: string;
+  playbackSessionId: string | null;
+} {
+  if (typeof source === "string") {
+    return { streamUrl: source, playbackSessionId: null };
+  }
+  return {
+    streamUrl: source.streamUrl,
+    playbackSessionId: source.playbackSessionId,
+  };
+}
+
 export function AudioEngine() {
   const audio = useRef<HTMLAudioElement>(null);
   const counted = useRef<string | null>(null);
+  const latestPosition = useRef(0);
   const loadToken = useRef(0);
   const activeSource = useRef("");
+  /** Session opened for the current listen — progress must target this id. */
+  const activeSessionId = useRef<string | null>(null);
   useDatabaseVersion();
   const tracks = repository.sessionUser() ? repository.tracks() : [];
   const state = usePlayer();
@@ -47,8 +80,14 @@ export function AudioEngine() {
     if (!element) return;
 
     const token = ++loadToken.current;
+    const trackId = track?.id ?? null;
+    const canReport = Boolean(
+      track && track.isPlayableForViewer && !unavailableIds.includes(track.id),
+    );
     counted.current = null;
+    latestPosition.current = 0;
     activeSource.current = "";
+    activeSessionId.current = null;
     element.pause();
     element.removeAttribute("src");
     element.load();
@@ -65,18 +104,20 @@ export function AudioEngine() {
     }
 
     let cancelled = false;
+    const api = repository as unknown as PlaybackReporter;
+    // Always open a fresh playback session per listen so replays can count
+    // streams/minutes (reusing a counted session returns validStreamRecorded:false).
     const sourceTask =
-      (
-        repository as unknown as {
-          playbackSource?: (trackId: string) => Promise<string>;
-        }
-      ).playbackSource?.(track.id) ?? Promise.resolve(track.audioUrl);
+      api.playbackSource?.(track.id, { force: true }) ??
+      Promise.resolve(track.audioUrl);
 
     sourceTask
       .then((nextSource) => {
         if (cancelled || token !== loadToken.current) return;
-        activeSource.current = nextSource;
-        element.src = nextSource;
+        const grant = grantFromSource(nextSource);
+        activeSource.current = grant.streamUrl;
+        activeSessionId.current = grant.playbackSessionId;
+        element.src = grant.streamUrl;
         if (usePlayer.getState().isPlaying) {
           element.play().catch((error: unknown) => {
             if (cancelled || token !== loadToken.current) return;
@@ -98,6 +139,20 @@ export function AudioEngine() {
 
     return () => {
       cancelled = true;
+      // Finalize against the session that belonged to this listen.
+      const sessionId = activeSessionId.current;
+      if (
+        canReport &&
+        trackId &&
+        sessionId &&
+        latestPosition.current > 0 &&
+        api.recordPlaybackProgress
+      ) {
+        void api.recordPlaybackProgress(trackId, latestPosition.current, {
+          finalize: true,
+          playbackSessionId: sessionId,
+        });
+      }
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [track?.id, playbackNonce]);
@@ -138,53 +193,95 @@ export function AudioEngine() {
       onTimeUpdate={(event) => {
         if (!track) return;
         const element = event.currentTarget;
+        latestPosition.current = element.currentTime;
         usePlayer
           .getState()
           .setProgress(
             element.currentTime,
             element.duration || track.durationSeconds,
           );
-        const threshold = Math.min(
-          30,
-          (element.duration || track.durationSeconds) * 0.8,
-        );
+
+        const api = repository as unknown as PlaybackReporter;
+        // Restarting the same track opens a new listen session so replays count.
         if (
-          element.currentTime >= threshold &&
-          counted.current !== track.id &&
-          track.isPlayableForViewer
+          counted.current === track.id &&
+          element.currentTime < 2.5 &&
+          api.playbackSource
         ) {
-          counted.current = track.id;
-          const progress = (
-            repository as unknown as {
-              recordPlaybackProgress?: (
-                trackId: string,
-                positionSeconds: number,
-              ) => void;
-            }
-          ).recordPlaybackProgress;
-          if (progress) progress(track.id, element.currentTime);
-          else repository.recordValidStream(track.id);
+          counted.current = null;
+          const token = loadToken.current;
+          void api.playbackSource(track.id, { force: true }).then((source) => {
+            if (token !== loadToken.current) return;
+            const grant = grantFromSource(source);
+            activeSessionId.current = grant.playbackSessionId;
+            if (grant.streamUrl) activeSource.current = grant.streamUrl;
+          });
         }
       }}
       onEnded={(event) => {
         if (!track) return;
+        const element = event.currentTarget;
+        const position = Math.max(
+          element.currentTime,
+          element.duration || track.durationSeconds,
+        );
+        latestPosition.current = position;
+        const api = repository as unknown as PlaybackReporter;
+        const sessionId = activeSessionId.current;
+
+        const finalizeListen = () => {
+          if (
+            !track.isPlayableForViewer ||
+            !api.recordPlaybackProgress ||
+            !sessionId
+          ) {
+            return Promise.resolve();
+          }
+          // Streams count when the track finishes — not mid-listen.
+          counted.current = track.id;
+          // Prevent the effect cleanup from sending a second finalize.
+          latestPosition.current = 0;
+          return Promise.resolve(
+            api.recordPlaybackProgress(track.id, position, {
+              finalize: true,
+              playbackSessionId: sessionId,
+            }),
+          );
+        };
+
         if (repeatMode === "one") {
-          event.currentTarget.currentTime = 0;
-          usePlayer.getState().setProgress(0);
-          event.currentTarget.play().catch((error: unknown) => {
-            if (
-              error instanceof DOMException &&
-              error.name === "NotAllowedError"
-            ) {
-              usePlayer.getState().setGestureRequired(true);
-              return;
+          void finalizeListen().finally(() => {
+            if (api.playbackSource) {
+              const token = loadToken.current;
+              void api
+                .playbackSource(track.id, { force: true })
+                .then((source) => {
+                  if (token !== loadToken.current) return;
+                  const grant = grantFromSource(source);
+                  activeSessionId.current = grant.playbackSessionId;
+                  if (grant.streamUrl) activeSource.current = grant.streamUrl;
+                });
             }
-            if (isBenignPlayError(error)) return;
-            handleFailure(track.id, loadToken.current);
+            element.currentTime = 0;
+            usePlayer.getState().setProgress(0);
+            element.play().catch((error: unknown) => {
+              if (
+                error instanceof DOMException &&
+                error.name === "NotAllowedError"
+              ) {
+                usePlayer.getState().setGestureRequired(true);
+                return;
+              }
+              if (isBenignPlayError(error)) return;
+              handleFailure(track.id, loadToken.current);
+            });
           });
-        } else {
-          usePlayer.getState().next("ended");
+          return;
         }
+
+        void finalizeListen().finally(() => {
+          usePlayer.getState().next("ended");
+        });
       }}
       onError={() => {
         if (!track || !activeSource.current) return;

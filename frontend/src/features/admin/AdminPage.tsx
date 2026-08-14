@@ -1,68 +1,69 @@
 import {
-  Archive,
   Banknote,
   BarChart3,
-  Check,
-  FileClock,
   Landmark,
   Save,
   ShieldCheck,
   ToggleLeft,
   ToggleRight,
+  Users,
   WalletCards,
 } from "lucide-react";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 import {
   Area,
   AreaChart,
-  Bar,
-  BarChart,
   CartesianGrid,
+  Cell,
+  Legend,
+  Pie,
+  PieChart,
   ResponsiveContainer,
   Tooltip,
   XAxis,
   YAxis,
 } from "recharts";
-import { CoverArt } from "../../components/CoverArt";
+import { RewardFormula } from "../../components/RewardFormula";
 import { repository } from "../../repositories/localRepository";
 import { useDatabaseVersion, useSession } from "../../store/session";
 
-const revenue = [
-  { monthKey: "monthFeb", rial: 182 },
-  { monthKey: "monthMar", rial: 214 },
-  { monthKey: "monthApr", rial: 238 },
-  { monthKey: "monthMay", rial: 267 },
-  { monthKey: "monthJun", rial: 301 },
-  { monthKey: "monthJul", rial: 329 },
-];
-const subscriberMix = [
-  { tierKey: "basic", count: 6480 },
-  { tierKey: "silver", count: 2710 },
-  { tierKey: "gold", count: 1380 },
-];
+const MIX_COLORS: Record<string, string> = {
+  basic: "#8a8f7a",
+  silver: "#c5c9ce",
+  gold: "#e2b340",
+};
 
 export function AdminPage() {
   const { t } = useTranslation();
   const user = useSession()!;
   useDatabaseVersion();
   const db = repository.database();
-  const [tab, setTab] = useState<
-    "overview" | "plans" | "audit" | "payouts" | "moderation"
-  >("overview");
+  const reports = db.adminReports;
+  const [tab, setTab] = useState<"overview" | "plans" | "accounting">(
+    "overview",
+  );
   const [drafts, setDrafts] = useState<
     Record<string, { monthlyPriceRial: number; discountPercent: number }>
   >({});
   const formatToman = (rial: number) =>
     `${Math.round(rial / 10).toLocaleString(user.locale)} ${t("toman")}`;
-  const revenueData = revenue.map((item) => ({
-    month: t(item.monthKey),
-    rial: item.rial,
+  const mixData = (reports?.subscriptionMix ?? []).map((item) => ({
+    name: t(item.tier),
+    value: item.count,
+    tier: item.tier,
   }));
-  const subscriberData = subscriberMix.map((item) => ({
-    tier: t(item.tierKey),
-    count: item.count,
+  const pieSlices = mixData.filter((item) => item.value > 0);
+  const revenueData = (reports?.revenueByMonth ?? []).map((item) => ({
+    period: item.period,
+    toman: Math.round(item.revenueRial / 10),
   }));
+  const hasRevenueChart = revenueData.some((item) => item.toman > 0);
+
+  useEffect(() => {
+    void repository.loadAdminData();
+  }, []);
+
   return (
     <div className="page admin-page">
       <header className="staff-hero admin">
@@ -72,15 +73,14 @@ export function AdminPage() {
             {t("adminRole")}
           </span>
           <h1>{t("admin")}</h1>
-          <p>{t("tehranReporting")}</p>
         </div>
         <div className="staff-stat">
-          <strong>10,570</strong>
+          <strong>{(reports?.subscriptions ?? 0).toLocaleString(user.locale)}</strong>
           <span>{t("subscriptions")}</span>
         </div>
         <div className="staff-stat gold">
-          <strong>32.9M</strong>
-          <span>{t("revenue")}</span>
+          <strong>{formatToman(reports?.revenueRial ?? 0)}</strong>
+          <span>{t("allTimeRevenue")}</span>
         </div>
       </header>
       <nav className="tab-bar admin-tabs">
@@ -97,22 +97,10 @@ export function AdminPage() {
           {t("plans")}
         </button>
         <button
-          className={tab === "audit" ? "active" : ""}
-          onClick={() => setTab("audit")}
+          className={tab === "accounting" ? "active" : ""}
+          onClick={() => setTab("accounting")}
         >
-          {t("audit")}
-        </button>
-        <button
-          className={tab === "payouts" ? "active" : ""}
-          onClick={() => setTab("payouts")}
-        >
-          {t("payouts")}
-        </button>
-        <button
-          className={tab === "moderation" ? "active" : ""}
-          onClick={() => setTab("moderation")}
-        >
-          {t("moderation")}
+          {t("accounting")}
         </button>
       </nav>
       {tab === "overview" && (
@@ -120,85 +108,128 @@ export function AdminPage() {
           <div className="admin-kpis">
             <div>
               <WalletCards />
-              <span>{t("revenue")}</span>
-              <strong>{formatToman(329_000_000)}</strong>
-              <small>+12.4%</small>
+              <span>{t("allTimeRevenue")}</span>
+              <strong>{formatToman(reports?.revenueRial ?? 0)}</strong>
+              <small>{t("revenue")}</small>
             </div>
             <div>
               <BarChart3 />
+              <span>{t("monthRevenue")}</span>
+              <strong>{formatToman(reports?.monthRevenueRial ?? 0)}</strong>
+              <small>{reports?.period}</small>
+            </div>
+            <div>
+              <Users />
               <span>{t("subscriptions")}</span>
-              <strong>10,570</strong>
-              <small>+8.1%</small>
+              <strong>
+                {(reports?.subscriptions ?? 0).toLocaleString(user.locale)}
+              </strong>
+              <small>{t("subscriptionMix")}</small>
             </div>
             <div>
               <Landmark />
-              <span>{t("payouts")}</span>
-              <strong>
-                {formatToman(
-                  db.payouts.reduce((sum, item) => sum + item.amountRial, 0),
-                )}
-              </strong>
-              <small>{t("pending")}</small>
+              <span>{t("pendingPayouts")}</span>
+              <strong>{formatToman(reports?.pendingPayoutsRial ?? 0)}</strong>
+              <small>
+                {(reports?.pendingPayoutsRial ?? 0) > 0
+                  ? t("payoutPending")
+                  : t("noPayoutDue")}
+              </small>
             </div>
           </div>
           <div className="chart-grid">
             <section className="chart-card">
               <h2>{t("revenue")}</h2>
-              <ResponsiveContainer width="100%" height={260}>
-                <AreaChart data={revenueData}>
-                  <defs>
-                    <linearGradient
-                      id="revenueFill"
-                      x1="0"
-                      y1="0"
-                      x2="0"
-                      y2="1"
-                    >
-                      <stop
-                        offset="0%"
-                        stopColor="#b6f13c"
-                        stopOpacity={0.45}
-                      />
-                      <stop offset="100%" stopColor="#b6f13c" stopOpacity={0} />
-                    </linearGradient>
-                  </defs>
-                  <CartesianGrid stroke="var(--chart-grid)" vertical={false} />
-                  <XAxis dataKey="month" stroke="var(--faint)" />
-                  <YAxis stroke="var(--faint)" />
-                  <Tooltip
-                    contentStyle={{
-                      background: "var(--panel)",
-                      border: "1px solid var(--border)",
-                      color: "var(--text)",
-                    }}
-                  />
-                  <Area
-                    type="monotone"
-                    dataKey="rial"
-                    stroke="#7bbd19"
-                    fill="url(#revenueFill)"
-                    strokeWidth={3}
-                  />
-                </AreaChart>
-              </ResponsiveContainer>
+              {hasRevenueChart ? (
+                <ResponsiveContainer width="100%" height={280}>
+                  <AreaChart data={revenueData}>
+                    <defs>
+                      <linearGradient
+                        id="revenueFill"
+                        x1="0"
+                        y1="0"
+                        x2="0"
+                        y2="1"
+                      >
+                        <stop
+                          offset="0%"
+                          stopColor="#b6f13c"
+                          stopOpacity={0.45}
+                        />
+                        <stop offset="100%" stopColor="#b6f13c" stopOpacity={0} />
+                      </linearGradient>
+                    </defs>
+                    <CartesianGrid stroke="var(--chart-grid)" vertical={false} />
+                    <XAxis dataKey="period" stroke="var(--faint)" />
+                    <YAxis
+                      stroke="var(--faint)"
+                      tickFormatter={(value: number) =>
+                        value.toLocaleString(user.locale)
+                      }
+                    />
+                    <Tooltip
+                      formatter={(value) => [
+                        `${Number(value).toLocaleString(user.locale)} ${t("toman")}`,
+                        t("revenue"),
+                      ]}
+                      contentStyle={{
+                        background: "var(--panel)",
+                        border: "1px solid var(--border)",
+                        color: "var(--text)",
+                      }}
+                    />
+                    <Area
+                      type="monotone"
+                      dataKey="toman"
+                      stroke="#7bbd19"
+                      fill="url(#revenueFill)"
+                      strokeWidth={3}
+                    />
+                  </AreaChart>
+                </ResponsiveContainer>
+              ) : (
+                <p className="muted">
+                  {reports ? t("noRevenueChart") : t("loading")}
+                </p>
+              )}
             </section>
             <section className="chart-card">
-              <h2>{t("subscriptions")}</h2>
-              <ResponsiveContainer width="100%" height={260}>
-                <BarChart data={subscriberData}>
-                  <CartesianGrid stroke="var(--chart-grid)" vertical={false} />
-                  <XAxis dataKey="tier" stroke="var(--faint)" />
-                  <YAxis stroke="var(--faint)" />
-                  <Tooltip
-                    contentStyle={{
-                      background: "var(--panel)",
-                      border: "1px solid var(--border)",
-                      color: "var(--text)",
-                    }}
-                  />
-                  <Bar dataKey="count" fill="#7c5cff" radius={[8, 8, 0, 0]} />
-                </BarChart>
-              </ResponsiveContainer>
+              <h2>{t("subscriptionMix")}</h2>
+              {pieSlices.length ? (
+                <ResponsiveContainer width="100%" height={280}>
+                  <PieChart>
+                    <Pie
+                      data={pieSlices}
+                      dataKey="value"
+                      nameKey="name"
+                      cx="50%"
+                      cy="50%"
+                      innerRadius={62}
+                      outerRadius={96}
+                      paddingAngle={2}
+                    >
+                      {pieSlices.map((item) => (
+                        <Cell
+                          key={item.tier}
+                          fill={MIX_COLORS[item.tier] ?? MIX_COLORS.basic}
+                        />
+                      ))}
+                    </Pie>
+                    <Legend />
+                    <Tooltip
+                      contentStyle={{
+                        background: "var(--panel)",
+                        border: "1px solid var(--border)",
+                        color: "var(--text)",
+                      }}
+                    />
+                  </PieChart>
+                </ResponsiveContainer>
+              ) : (
+                <p className="muted">
+                  {reports ? t("noSubscriptionMix") : t("loading")}
+                </p>
+              )}
             </section>
           </div>
         </div>
@@ -217,7 +248,7 @@ export function AdminPage() {
                     {t(plan.tier)} · {plan.durationMonths} {t("monthShort")}
                   </span>
                   <button
-                    className="icon-button"
+                    className="icon-button plan-toggle"
                     onClick={() =>
                       repository.updatePlan(plan.id, {
                         isAvailable: !plan.isAvailable,
@@ -286,90 +317,71 @@ export function AdminPage() {
           })}
         </div>
       )}
-      {tab === "audit" && (
-        <div className="audit-table">
-          <div className="table-head">
-            <span>{t("action")}</span>
-            <span>{t("target")}</span>
-            <span>{t("actor")}</span>
-            <span>{t("date")}</span>
-            <span>{t("requestId")}</span>
-          </div>
-          {[...db.auditEvents].reverse().map((event) => (
-            <div className="table-row" key={event.id}>
-              <span>
-                <FileClock />
-                {event.action}
-              </span>
-              <code>{event.target}</code>
-              <span>
-                {
-                  db.users.find((item) => item.id === event.actorId)
-                    ?.displayName
-                }
-              </span>
-              <time>{new Date(event.createdAt).toLocaleString()}</time>
-              <code>{event.requestId}</code>
+      {tab === "accounting" && (
+        <div className="accounting-panel">
+          <RewardFormula />
+          <div className="audit-table accounting-table">
+            <div className="table-head">
+              <span>{t("artist")}</span>
+              <span>{t("uniqueListeners")}</span>
+              <span>{t("validStreams")}</span>
+              <span>{t("artistReward")}</span>
+              <span>{t("payoutStatus")}</span>
+              <span>{t("settle")}</span>
             </div>
-          ))}
-        </div>
-      )}
-      {tab === "payouts" && (
-        <div className="payout-list">
-          {db.payouts.map((payout) => {
-            const artist = db.users.find(
-              (item) => item.id === payout.artistUserId,
-            );
-            return (
-              <article key={payout.id}>
-                <span className="payout-icon">
-                  <Banknote />
-                </span>
-                <div>
-                  <h2>{artist?.artistProfile?.stageName}</h2>
+            {db.payouts.length ? (
+              db.payouts.map((payout) => (
+                <div className="table-row" key={payout.id}>
                   <span>
-                    {payout.period} · {t(payout.status)}
+                    <Banknote />
+                    <span className="accounting-artist">
+                      <strong>
+                        {payout.artistName ??
+                          db.users.find((item) => item.id === payout.artistUserId)
+                            ?.artistProfile?.stageName}
+                      </strong>
+                      <small>@{payout.username ?? ""}</small>
+                    </span>
                   </span>
-                </div>
-                <strong>{formatToman(payout.amountRial)}</strong>
-                <button
-                  className="button ghost"
-                  disabled={payout.status === "settled"}
-                  onClick={() => repository.settlePayout(payout.id)}
-                >
-                  {payout.status === "settled" ? <Check /> : <Landmark />}
-                  {t(payout.status === "settled" ? "settled" : "settle")}
-                </button>
-              </article>
-            );
-          })}
-        </div>
-      )}
-      {tab === "moderation" && (
-        <div className="moderation-list">
-          {db.releases
-            .filter((release) => release.status !== "archived")
-            .map((release) => (
-              <article key={release.id}>
-                <CoverArt src={release.coverUrl} alt="" />
-                <div>
-                  <h2>{release.title}</h2>
                   <span>
-                    {release.primaryArtist.stageName} · {release.status}
+                    {(payout.uniqueListeners ?? 0).toLocaleString(user.locale)}
                   </span>
+                  <span>
+                    {(payout.validStreams ?? 0).toLocaleString(user.locale)}
+                  </span>
+                  <strong>
+                    {payout.amountRial > 0
+                      ? formatToman(payout.amountRial)
+                      : "—"}
+                  </strong>
+                  <span>
+                    {t(
+                      payout.status === "settled"
+                        ? "settled"
+                        : payout.amountRial > 0
+                          ? "payoutPending"
+                          : "noPayoutDue",
+                    )}
+                  </span>
+                  {payout.status === "settled" ? (
+                    <span className="muted">{t("settled")}</span>
+                  ) : payout.amountRial > 0 ? (
+                    <button
+                      className="button ghost small"
+                      onClick={() => repository.settlePayout(payout.id)}
+                    >
+                      <Landmark />
+                      {t("settle")}
+                    </button>
+                  ) : (
+                    <span className="muted">—</span>
+                  )}
                 </div>
-                <button
-                  className="button danger"
-                  onClick={() => {
-                    const reason = prompt(t("moderationReason"));
-                    if (reason) repository.moderateRelease(release.id, reason);
-                  }}
-                >
-                  <Archive />
-                  {t("archive")}
-                </button>
-              </article>
-            ))}
+              ))
+            ) : (
+              <p className="muted accounting-empty">{t("noAccountingRows")}</p>
+            )}
+          </div>
         </div>
       )}
     </div>

@@ -1,18 +1,61 @@
 import {
   BadgeCheck,
+  CalendarDays,
   Check,
   ChevronRight,
   CircleUserRound,
-  Headphones,
+  ExternalLink,
+  Globe2,
+  Link2,
+  Mail,
+  Music2,
   Send,
   ShieldCheck,
   UserCheck,
+  UserRound,
   X,
 } from "lucide-react";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
+import type { VerificationRequest } from "../../domain/types";
 import { repository } from "../../repositories/localRepository";
 import { useDatabaseVersion, useSession } from "../../store/session";
+
+function genderLabel(
+  gender: string | null | undefined,
+  t: (key: string) => string,
+) {
+  if (!gender) return "—";
+  if (gender === "non_binary") return t("nonBinary");
+  if (gender === "prefer_not_to_say") return t("preferNot");
+  return t(gender);
+}
+
+function applicantFromRequest(
+  request: VerificationRequest,
+  dbUser:
+    | ReturnType<typeof repository.database>["users"][number]
+    | undefined,
+) {
+  return {
+    stageName:
+      request.artistName ||
+      dbUser?.artistProfile?.stageName ||
+      dbUser?.displayName ||
+      "Artist",
+    displayName: request.displayName || dbUser?.displayName || "—",
+    username: request.username || dbUser?.username || "—",
+    email: request.email || dbUser?.email || "—",
+    avatarUrl: request.avatarUrl ?? dbUser?.avatarUrl ?? null,
+    bio: request.bio || dbUser?.artistProfile?.bio || "",
+    genre: request.genre || dbUser?.artistProfile?.genre || "",
+    birthDate: request.birthDate || dbUser?.birthDate || null,
+    gender: request.gender || dbUser?.gender || null,
+    locale: request.locale || dbUser?.locale || "—",
+    timezone: request.timezone || dbUser?.timezone || "—",
+    accountCreatedAt: request.accountCreatedAt || null,
+  };
+}
 
 export function SupportPage() {
   const { t } = useTranslation();
@@ -29,8 +72,25 @@ export function SupportPage() {
     approved: boolean;
   } | null>(null);
   const [reason, setReason] = useState("");
-  const [selectedTicket, setSelectedTicket] = useState(tickets[0]?.id ?? null);
+  const [selectedTicket, setSelectedTicket] = useState<string | null>(
+    tickets[0]?.id ?? null,
+  );
   const [reply, setReply] = useState("");
+
+  useEffect(() => {
+    void repository.loadSupportData();
+  }, []);
+
+  useEffect(() => {
+    if (!tickets.length) {
+      setSelectedTicket(null);
+      return;
+    }
+    if (!selectedTicket || !tickets.some((item) => item.id === selectedTicket)) {
+      setSelectedTicket(tickets[0].id);
+    }
+  }, [tickets, selectedTicket]);
+
   const ticket = tickets.find((item) => item.id === selectedTicket);
   const decide = () => {
     if (decision && reason.trim()) {
@@ -41,25 +101,8 @@ export function SupportPage() {
   };
   return (
     <div className="page support-page">
-      <header className="staff-hero">
-        <div>
-          <span className="eyebrow">
-            <Headphones />
-            {t("supportRole")}
-          </span>
-          <h1>{t("support")}</h1>
-          <p>{me.displayName}</p>
-        </div>
-        <div className="staff-stat">
-          <strong>{requests.length}</strong>
-          <span>{t("pending")}</span>
-        </div>
-        <div className="staff-stat">
-          <strong>
-            {tickets.filter((item) => item.status !== "closed").length}
-          </strong>
-          <span>{t("open")}</span>
-        </div>
+      <header className="page-heading">
+        <h1>{t("support")}</h1>
       </header>
       <nav className="tab-bar">
         <button
@@ -76,54 +119,151 @@ export function SupportPage() {
         </button>
       </nav>
       {tab === "verification" && (
-        <div className="staff-list">
+        <div className="staff-list verification-queue">
           {requests.length ? (
             requests.map((request) => {
-              const user = db.users.find((item) => item.id === request.userId)!;
+              const user = db.users.find((item) => item.id === request.userId);
+              const artist = applicantFromRequest(request, user);
               return (
                 <article className="verification-request" key={request.id}>
-                  <div className="request-avatar">
-                    <CircleUserRound />
-                  </div>
-                  <div>
-                    <h2>{user.artistProfile?.stageName}</h2>
-                    <span>
-                      @{user.username} ·{" "}
-                      {new Date(request.createdAt).toLocaleDateString()}
-                    </span>
-                    <p>{request.note}</p>
-                    <div className="portfolio-links">
-                      {request.portfolioUrls.map((url) => (
-                        <a
-                          href={url}
-                          target="_blank"
-                          rel="noreferrer"
-                          key={url}
-                        >
-                          {url}
-                        </a>
-                      ))}
+                  <header className="verification-request-head">
+                    <div className="request-avatar">
+                      {artist.avatarUrl ? (
+                        <img src={artist.avatarUrl} alt="" />
+                      ) : (
+                        <CircleUserRound />
+                      )}
                     </div>
-                  </div>
-                  <div className="request-actions">
-                    <button
-                      className="button creator"
-                      onClick={() =>
-                        setDecision({ id: request.id, approved: true })
-                      }
-                    >
-                      <BadgeCheck />
-                      {t("approve")}
-                    </button>
-                    <button
-                      className="button ghost"
-                      onClick={() =>
-                        setDecision({ id: request.id, approved: false })
-                      }
-                    >
-                      <X />
-                      {t("reject")}
-                    </button>
+                    <div className="verification-request-title">
+                      <h2>{artist.stageName}</h2>
+                      <p>
+                        @{artist.username}
+                        <span aria-hidden> · </span>
+                        {t("verificationSubmittedAt")}{" "}
+                        {new Date(request.createdAt).toLocaleString()}
+                      </p>
+                    </div>
+                    <div className="request-actions">
+                      <button
+                        className="button creator"
+                        onClick={() =>
+                          setDecision({ id: request.id, approved: true })
+                        }
+                      >
+                        <BadgeCheck />
+                        {t("approve")}
+                      </button>
+                      <button
+                        className="button ghost"
+                        onClick={() =>
+                          setDecision({ id: request.id, approved: false })
+                        }
+                      >
+                        <X />
+                        {t("reject")}
+                      </button>
+                    </div>
+                  </header>
+
+                  <div className="verification-request-body">
+                    <section>
+                      <h3>{t("verificationApplicant")}</h3>
+                      <dl className="verification-facts">
+                        <div>
+                          <dt>
+                            <UserRound />
+                            {t("displayName")}
+                          </dt>
+                          <dd>{artist.displayName}</dd>
+                        </div>
+                        <div>
+                          <dt>
+                            <Mail />
+                            {t("email")}
+                          </dt>
+                          <dd>
+                            <a href={`mailto:${artist.email}`}>{artist.email}</a>
+                          </dd>
+                        </div>
+                        <div>
+                          <dt>
+                            <CalendarDays />
+                            {t("birthDate")}
+                          </dt>
+                          <dd>
+                            {artist.birthDate
+                              ? new Date(artist.birthDate).toLocaleDateString()
+                              : "—"}
+                          </dd>
+                        </div>
+                        <div>
+                          <dt>
+                            <UserCheck />
+                            {t("gender")}
+                          </dt>
+                          <dd>{genderLabel(artist.gender, t)}</dd>
+                        </div>
+                        <div>
+                          <dt>
+                            <Globe2 />
+                            {t("language")}
+                          </dt>
+                          <dd>
+                            {artist.locale} · {artist.timezone}
+                          </dd>
+                        </div>
+                        <div>
+                          <dt>
+                            <Music2 />
+                            {t("genre")}
+                          </dt>
+                          <dd>{artist.genre || t("noGenreProvided")}</dd>
+                        </div>
+                        {artist.accountCreatedAt ? (
+                          <div>
+                            <dt>
+                              <CalendarDays />
+                              {t("accountCreated")}
+                            </dt>
+                            <dd>
+                              {new Date(
+                                artist.accountCreatedAt,
+                              ).toLocaleDateString()}
+                            </dd>
+                          </div>
+                        ) : null}
+                      </dl>
+                      <div className="verification-bio">
+                        <strong>{t("artistBio")}</strong>
+                        <p>{artist.bio || t("noBioProvided")}</p>
+                      </div>
+                    </section>
+
+                    <section>
+                      <h3>{t("verificationMaterials")}</h3>
+                      <div className="verification-note">
+                        <strong>{t("note")}</strong>
+                        <p>{request.note || "—"}</p>
+                      </div>
+                      <div className="portfolio-links">
+                        {request.portfolioUrls.length ? (
+                          request.portfolioUrls.map((url) => (
+                            <a
+                              href={url}
+                              target="_blank"
+                              rel="noreferrer"
+                              key={url}
+                            >
+                              <Link2 />
+                              <span>{url}</span>
+                              <ExternalLink />
+                            </a>
+                          ))
+                        ) : (
+                          <p className="muted">{t("portfolioUrl")}</p>
+                        )}
+                      </div>
+                    </section>
                   </div>
                 </article>
               );
@@ -169,21 +309,12 @@ export function SupportPage() {
           {ticket && (
             <section className="ticket-thread">
               <header>
-                <div>
+                <div className="ticket-thread-meta">
                   <span className="eyebrow">#{ticket.id.slice(-6)}</span>
                   <h2>{ticket.subject}</h2>
                   <span>{t(ticket.status)}</span>
                 </div>
-                <div>
-                  {ticket.status !== "closed" && (
-                    <button
-                      className="button ghost"
-                      onClick={() => repository.claimTicket(ticket.id)}
-                    >
-                      <UserCheck />
-                      {t(ticket.claimedById === me.id ? "unclaim" : "claim")}
-                    </button>
-                  )}
+                <div className="ticket-thread-actions">
                   <button
                     className="button ghost"
                     onClick={() => repository.closeTicket(ticket.id)}
@@ -266,13 +397,15 @@ export function SupportPage() {
                 onChange={(e) => setReason(e.target.value)}
               />
             </label>
-            <button
-              className="button primary wide"
-              onClick={decide}
-              disabled={!reason.trim()}
-            >
-              {t("confirm")}
-            </button>
+            <div className="modal-actions">
+              <button
+                className="button primary wide"
+                onClick={decide}
+                disabled={!reason.trim()}
+              >
+                {t("confirm")}
+              </button>
+            </div>
           </div>
         </div>
       )}

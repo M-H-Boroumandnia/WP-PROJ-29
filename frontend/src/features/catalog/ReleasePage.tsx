@@ -1,10 +1,11 @@
 import { CalendarDays, LockKeyhole, Sparkles } from "lucide-react";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { Link, useParams } from "react-router-dom";
 import { CoverArt } from "../../components/CoverArt";
 import { EmptyState } from "../../components/EmptyState";
 import { TrackRow } from "../../components/TrackRow";
+import type { TrackView } from "../../domain/types";
 import { repository } from "../../repositories/localRepository";
 import { useDatabaseVersion, useSession } from "../../store/session";
 
@@ -13,10 +14,11 @@ export function ReleasePage() {
   const { t } = useTranslation();
   const user = useSession()!;
   useDatabaseVersion();
-  const db = repository.database();
-  const release = db.releases.find(
-    (item) => item.id === releaseId && item.status !== "archived",
-  );
+  useEffect(() => {
+    if (!releaseId) return;
+    void repository.loadReleaseData?.(releaseId);
+  }, [releaseId]);
+  const release = repository.release(releaseId);
   const allTracks = repository.tracks();
   const [renderNow] = useState(() => Date.now());
   if (!release)
@@ -31,7 +33,7 @@ export function ReleasePage() {
     );
   const tracks = release.trackIds
     .map((id) => allTracks.find((track) => track.id === id))
-    .filter(Boolean) as typeof allTracks;
+    .filter(Boolean) as TrackView[];
   const date = new Intl.DateTimeFormat(user.locale, {
     dateStyle: "long",
   }).format(new Date(release.publicReleaseAt));

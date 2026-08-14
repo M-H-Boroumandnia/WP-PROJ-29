@@ -7,10 +7,38 @@ from pathlib import Path
 BASE_DIR = Path(__file__).resolve().parent.parent
 ROOT_DIR = BASE_DIR.parent
 
+
+def _load_dotenv(path: Path) -> None:
+    if not path.is_file():
+        return
+    for raw in path.read_text(encoding="utf-8").splitlines():
+        line = raw.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, value = line.split("=", 1)
+        key = key.strip()
+        value = value.strip().strip("'").strip('"')
+        os.environ.setdefault(key, value)
+
+
+_load_dotenv(BASE_DIR / ".env")
+_load_dotenv(ROOT_DIR / ".env")
+
 SECRET_KEY = os.environ.get("SONORA_SECRET_KEY", "sonora-dev-only-change-me-with-at-least-32-bytes")
 DEBUG = os.environ.get("SONORA_DEBUG", "1") == "1"
-ALLOWED_HOSTS = [host.strip() for host in os.environ.get("SONORA_ALLOWED_HOSTS", "127.0.0.1,localhost,testserver").split(",") if host.strip()]
-CSRF_TRUSTED_ORIGINS = [origin for origin in os.environ.get("SONORA_CSRF_TRUSTED_ORIGINS", "http://127.0.0.1:5173,http://127.0.0.1:4174,http://127.0.0.1:4175").split(",") if origin]
+ALLOWED_HOSTS = [
+    host.strip()
+    for host in os.environ.get("SONORA_ALLOWED_HOSTS", "127.0.0.1,localhost,testserver").split(",")
+    if host.strip()
+]
+CSRF_TRUSTED_ORIGINS = [
+    origin
+    for origin in os.environ.get(
+        "SONORA_CSRF_TRUSTED_ORIGINS",
+        "http://localhost:5173,http://127.0.0.1:5173,http://localhost:4174,http://127.0.0.1:4174",
+    ).split(",")
+    if origin
+]
 
 INSTALLED_APPS = [
     "daphne",
@@ -25,11 +53,18 @@ INSTALLED_APPS = [
     "corsheaders",
     "drf_spectacular",
     "channels",
-    "api",
+    "core",
+    "accounts",
+    "catalog",
+    "playlists",
+    "billing",
+    "notifications",
+    "rooms",
+    "support",
 ]
 
 MIDDLEWARE = [
-    "api.middleware.RequestIdMiddleware",
+    "core.middleware.RequestIdMiddleware",
     "corsheaders.middleware.CorsMiddleware",
     "django.middleware.security.SecurityMiddleware",
     "django.contrib.sessions.middleware.SessionMiddleware",
@@ -43,18 +78,22 @@ MIDDLEWARE = [
 ROOT_URLCONF = "sonora.urls"
 ASGI_APPLICATION = "sonora.asgi.application"
 WSGI_APPLICATION = "sonora.wsgi.application"
-AUTH_USER_MODEL = "api.User"
+AUTH_USER_MODEL = "accounts.User"
 
-TEMPLATES = [{
-    "BACKEND": "django.template.backends.django.DjangoTemplates",
-    "DIRS": [],
-    "APP_DIRS": True,
-    "OPTIONS": {"context_processors": [
-        "django.template.context_processors.request",
-        "django.contrib.auth.context_processors.auth",
-        "django.contrib.messages.context_processors.messages",
-    ]},
-}]
+TEMPLATES = [
+    {
+        "BACKEND": "django.template.backends.django.DjangoTemplates",
+        "DIRS": [],
+        "APP_DIRS": True,
+        "OPTIONS": {
+            "context_processors": [
+                "django.template.context_processors.request",
+                "django.contrib.auth.context_processors.auth",
+                "django.contrib.messages.context_processors.messages",
+            ]
+        },
+    }
+]
 
 db_url = os.environ.get("DATABASE_URL")
 if db_url and db_url.startswith("postgres://"):
@@ -95,19 +134,28 @@ PRIVATE_MEDIA_ROOT = BASE_DIR / "private_media"
 
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 
-CORS_ALLOWED_ORIGINS = [origin for origin in os.environ.get("SONORA_CORS_ORIGINS", "http://127.0.0.1:5173,http://localhost:5173,http://127.0.0.1:4174,http://127.0.0.1:4175").split(",") if origin]
+CORS_ALLOWED_ORIGINS = [
+    origin
+    for origin in os.environ.get(
+        "SONORA_CORS_ORIGINS",
+        "http://localhost:5173,http://127.0.0.1:5173,http://localhost:4174,http://127.0.0.1:4174",
+    ).split(",")
+    if origin
+]
 CORS_ALLOW_CREDENTIALS = True
 
 REST_FRAMEWORK = {
-    "DEFAULT_AUTHENTICATION_CLASSES": ("rest_framework_simplejwt.authentication.JWTAuthentication",),
+    "DEFAULT_AUTHENTICATION_CLASSES": (
+        "rest_framework_simplejwt.authentication.JWTAuthentication",
+    ),
     "DEFAULT_PERMISSION_CLASSES": ("rest_framework.permissions.IsAuthenticated",),
     "DEFAULT_SCHEMA_CLASS": "drf_spectacular.openapi.AutoSchema",
-    "EXCEPTION_HANDLER": "api.exceptions.exception_handler",
+    "EXCEPTION_HANDLER": "core.exceptions.exception_handler",
     "DEFAULT_THROTTLE_CLASSES": (
-        "api.throttles.LoginThrottle",
-        "api.throttles.UploadThrottle",
-        "api.throttles.TelemetryThrottle",
-        "api.throttles.SensitiveActionThrottle",
+        "core.throttles.LoginThrottle",
+        "core.throttles.UploadThrottle",
+        "core.throttles.TelemetryThrottle",
+        "core.throttles.SensitiveActionThrottle",
     ),
     "DEFAULT_THROTTLE_RATES": {
         "login": "10/min",
@@ -134,7 +182,12 @@ SPECTACULAR_SETTINGS = {
 
 CHANNEL_REDIS_URL = os.environ.get("REDIS_URL")
 if CHANNEL_REDIS_URL:
-    CHANNEL_LAYERS = {"default": {"BACKEND": "channels_redis.core.RedisChannelLayer", "CONFIG": {"hosts": [CHANNEL_REDIS_URL]}}}
+    CHANNEL_LAYERS = {
+        "default": {
+            "BACKEND": "channels_redis.core.RedisChannelLayer",
+            "CONFIG": {"hosts": [CHANNEL_REDIS_URL]},
+        }
+    }
 else:
     CHANNEL_LAYERS = {"default": {"BACKEND": "channels.layers.InMemoryChannelLayer"}}
 
@@ -143,6 +196,19 @@ CELERY_RESULT_BACKEND = os.environ.get("CELERY_RESULT_BACKEND", "cache+memory://
 CELERY_TASK_ALWAYS_EAGER = os.environ.get("SONORA_CELERY_EAGER", "1") == "1"
 
 SONORA_DEMO_MODE = os.environ.get("SONORA_DEMO_MODE", "1") == "1"
-SONORA_FRONTEND_URL = os.environ.get("SONORA_FRONTEND_URL", "http://127.0.0.1:5173")
-SONORA_STREAM_SIGNING_MAX_AGE_SECONDS = int(os.environ.get("SONORA_STREAM_SIGNING_MAX_AGE_SECONDS", "600"))
+SONORA_FRONTEND_URL = os.environ.get("SONORA_FRONTEND_URL", "http://localhost:5173")
+SONORA_STREAM_SIGNING_MAX_AGE_SECONDS = int(
+    os.environ.get("SONORA_STREAM_SIGNING_MAX_AGE_SECONDS", "600")
+)
 SONORA_FFMPEG_BINARY = os.environ.get("SONORA_FFMPEG_BINARY", "ffmpeg")
+
+# Zarinpal sandbox is on by default for Phase-2 checkout.
+# Set SONORA_ZARINPAL_ENABLED=0 to keep instant mock payments.
+# Docs: https://www.zarinpal.com/docs/paymentGateway/sandBox.html
+SONORA_ZARINPAL_ENABLED = os.environ.get("SONORA_ZARINPAL_ENABLED", "1") == "1"
+SONORA_ZARINPAL_SANDBOX = os.environ.get("SONORA_ZARINPAL_SANDBOX", "1") == "1"
+SONORA_ZARINPAL_MERCHANT_ID = os.environ.get(
+    "SONORA_ZARINPAL_MERCHANT_ID", "c8d2f8b6-07c1-496c-9f4c-f8e8afae1955"
+)
+# Required when Zarinpal is enabled — set the absolute Django callback URL yourself.
+SONORA_ZARINPAL_CALLBACK_URL = os.environ.get("SONORA_ZARINPAL_CALLBACK_URL", "")
