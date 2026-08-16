@@ -76,13 +76,13 @@ def leave_room(user: User, room: ListeningRoom) -> ListeningRoom:
     participant.left_at = now_utc()
     participant.save(update_fields=["left_at", "updated_at"])
     active = list(room.participants.filter(left_at__isnull=True).order_by("joined_at"))
-    if not active:
-        room.status = ListeningRoom.Status.CLOSED
-    elif room.host_id == user.id:
+    update_fields = ["updated_at"]
+    if active and room.host_id == user.id:
         room.host = active[0].user
+        update_fields.append("host")
         active[0].can_control = True
         active[0].save(update_fields=["can_control", "updated_at"])
-    room.save(update_fields=["status", "host", "updated_at"])
+    room.save(update_fields=update_fields)
     return room
 
 

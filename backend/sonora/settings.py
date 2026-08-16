@@ -191,10 +191,6 @@ if CHANNEL_REDIS_URL:
 else:
     CHANNEL_LAYERS = {"default": {"BACKEND": "channels.layers.InMemoryChannelLayer"}}
 
-CELERY_BROKER_URL = os.environ.get("CELERY_BROKER_URL", os.environ.get("REDIS_URL", "memory://"))
-CELERY_RESULT_BACKEND = os.environ.get("CELERY_RESULT_BACKEND", "cache+memory://")
-CELERY_TASK_ALWAYS_EAGER = os.environ.get("SONORA_CELERY_EAGER", "1") == "1"
-
 SONORA_DEMO_MODE = os.environ.get("SONORA_DEMO_MODE", "1") == "1"
 SONORA_FRONTEND_URL = os.environ.get("SONORA_FRONTEND_URL", "http://localhost:5173")
 SONORA_STREAM_SIGNING_MAX_AGE_SECONDS = int(

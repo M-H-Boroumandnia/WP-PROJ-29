@@ -234,6 +234,8 @@ const en = {
   profileImageInvalid: "Choose a JPEG, PNG, or WebP image.",
   profileImageReadError: "The browser could not read that image.",
   notificationTitle: "Your signals",
+  emptyNotifications: "No notifications",
+  emptyNotificationsBody: "When something happens, it will show up here.",
   markAllRead: "Mark all read",
   unread: "Unread",
   read: "Read",
@@ -268,6 +270,24 @@ const en = {
   noticeVerificationPendingTitle: "Verification waiting",
   noticeVerificationPendingBody:
     "{{name}} submitted a verification request for review.",
+  noticeVerificationApprovedTitle: "Verification approved",
+  noticeVerificationApprovedBody:
+    "Your artist account is verified. Open Studio to publish releases.",
+  noticeVerificationRejectedTitle: "Verification rejected",
+  noticeVerificationRejectedBody: "Reason: {{reason}}",
+  noticeFollowedReleaseTitle: "{{artist}} released {{title}}",
+  noticeFollowedReleaseBody: "A new release from an artist you follow is out.",
+  noticeSubscriptionExpiringTitle: "{{tier}} ending soon",
+  noticeSubscriptionExpiringBody:
+    "Your plan ends in {{days}} day(s). Renew in Settings to keep benefits.",
+  noticeSubscriptionExpiredTitle: "Subscription expired",
+  noticeSubscriptionExpiredBody:
+    "Your {{tier}} plan ended. You are back on Basic — renew anytime in Settings.",
+  noticePayoutSettledTitle: "Payout settled",
+  noticePayoutSettledBody: "Your reward for {{period}} was marked settled.",
+  openNotification: "Open",
+  discography: "Discography",
+  noReleases: "No releases yet",
   artistBio: "Bio",
   accountCreated: "Account created",
   verificationApplicant: "Applicant details",
@@ -521,6 +541,8 @@ const en = {
   joinRoom: "Join room",
   roomCode: "Room code",
   inviteCode: "Invite code",
+  copyInviteCode: "Copy invite code",
+  inviteCopied: "Invite code copied",
   roomConnectionError: "Room connection failed.",
   roomLocalLock:
     "This track is locked for your account, but you remain in the shared timeline.",
@@ -1046,6 +1068,8 @@ const es: Dictionary = {
   joinRoom: "Unirse",
   roomCode: "Código de sala",
   inviteCode: "Código de invitación",
+  copyInviteCode: "Copiar código de invitación",
+  inviteCopied: "Código de invitación copiado",
   roomConnectionError: "Falló la conexión de la sala.",
   roomLocalLock:
     "Esta pista está bloqueada para tu cuenta, pero sigues en la línea temporal compartida.",
@@ -1562,6 +1586,8 @@ const de: Dictionary = {
   joinRoom: "Raum beitreten",
   roomCode: "Raumcode",
   inviteCode: "Einladungscode",
+  copyInviteCode: "Einladungscode kopieren",
+  inviteCopied: "Einladungscode kopiert",
   roomConnectionError: "Raumverbindung fehlgeschlagen.",
   roomLocalLock:
     "Dieser Track ist für dein Konto gesperrt, aber du bleibst in der gemeinsamen Timeline.",
@@ -2081,6 +2107,8 @@ const fr: Dictionary = {
   joinRoom: "Join room",
   roomCode: "Room code",
   inviteCode: "Invite code",
+  copyInviteCode: "Copy invite code",
+  inviteCopied: "Invite code copied",
   roomConnectionError: "Room connection failed.",
   roomLocalLock:
     "This track is locked for your account, but you remain in the shared timeline.",
@@ -2595,6 +2623,8 @@ const ru: Dictionary = {
   joinRoom: "Join room",
   roomCode: "Room code",
   inviteCode: "Invite code",
+  copyInviteCode: "Copy invite code",
+  inviteCopied: "Invite code copied",
   roomConnectionError: "Room connection failed.",
   roomLocalLock:
     "This track is locked for your account, but you remain in the shared timeline.",
@@ -3079,6 +3109,8 @@ const zh: Dictionary = {
   joinRoom: "Join room",
   roomCode: "Room code",
   inviteCode: "Invite code",
+  copyInviteCode: "Copy invite code",
+  inviteCopied: "Invite code copied",
   roomConnectionError: "Room connection failed.",
   roomLocalLock:
     "This track is locked for your account, but you remain in the shared timeline.",

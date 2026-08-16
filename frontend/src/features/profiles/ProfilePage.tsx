@@ -170,7 +170,7 @@ export function ProfilePage({
       </div>
     );
 
-  const { user: profileUser, profile, playlists } = result;
+  const { user: profileUser, profile, playlists, releases, artistStats } = result;
   const user =
     profileUser.id === me.id
       ? {
@@ -580,24 +580,48 @@ export function ProfilePage({
         </div>
       )}
 
-      {artist && me.subscription.tier === "gold" && (
+      {artist && me.subscription.tier === "gold" && artistStats && (
         <div className="metrics-grid">
           <div>
             <Users />
-            <strong>{user.followerIds.length * 2860 + 12400}</strong>
+            <strong>{artistStats.uniqueListeners.toLocaleString(me.locale)}</strong>
             <span>{t("listeners")}</span>
           </div>
           <div>
             <Headphones />
-            <strong>{user.followerIds.length.toLocaleString()}</strong>
+            <strong>{artistStats.streams.toLocaleString(me.locale)}</strong>
             <span>{t("streams")}</span>
           </div>
           <div>
             <BarChart3 />
-            <strong>+18%</strong>
-            <span>{t("artistMetrics")}</span>
+            <strong>{artistStats.releases.toLocaleString(me.locale)}</strong>
+            <span>{t("releases")}</span>
           </div>
         </div>
+      )}
+
+      {artist && (
+        <Section title={t("discography")}>
+          {releases.length ? (
+            <div className="media-grid">
+              {releases.map((release) => (
+                <MediaCard
+                  key={release.id}
+                  title={release.title}
+                  subtitle={`${t(release.type)} · ${release.primaryArtist.stageName}`}
+                  coverUrl={release.coverUrl}
+                  href={`/release/${release.id}`}
+                />
+              ))}
+            </div>
+          ) : (
+            <EmptyState
+              icon={Headphones}
+              title={t("noReleases")}
+              body=""
+            />
+          )}
+        </Section>
       )}
 
       <Section title={t("publicPlaylists")}>

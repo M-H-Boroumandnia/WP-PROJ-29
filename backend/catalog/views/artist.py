@@ -162,7 +162,10 @@ class ArtistReleaseDetailView(SonoraAPIView):
         if "type" in request.data:
             release.release_type = request.data["type"]
         if "status" in request.data:
+            previous_status = release.status
             release.status = request.data["status"]
+        else:
+            previous_status = release.status
         if "publicReleaseAt" in request.data:
             release.public_release_at = parse_api_datetime(
                 request.data["publicReleaseAt"], default=timezone.now()
@@ -175,6 +178,28 @@ class ArtistReleaseDetailView(SonoraAPIView):
         if cover:
             process_cover(release, cover)
         release.save()
+        if (
+            previous_status != Release.Status.PUBLISHED
+            and release.status == Release.Status.PUBLISHED
+        ):
+            from accounts.models import Follow
+            from notifications.services import create_notification
+
+            stage = getattr(request.user.artist_profile, "stage_name", request.user.display_name)
+            for edge in Follow.objects.filter(target=request.user).select_related("follower"):
+                create_notification(
+                    edge.follower,
+                    f"{stage} released {release.title}",
+                    f"A new release from {stage} is available.",
+                    Notification.Kind.RELEASE,
+                    "noticeFollowedReleaseTitle",
+                    "noticeFollowedReleaseBody",
+                    {
+                        "artist": stage,
+                        "title": release.title,
+                        "link": f"/release/{release.id}",
+                    },
+                )
         return Response(
             ReleaseSerializer(release, context={"request": request, "viewer": request.user}).data
         )

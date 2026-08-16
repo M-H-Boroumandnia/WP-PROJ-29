@@ -4,6 +4,7 @@ from django.db.models import Q
 from django.shortcuts import get_object_or_404
 
 from rest_framework import status
+from rest_framework.parsers import JSONParser
 from rest_framework.request import Request
 from rest_framework.response import Response
 
@@ -25,6 +26,7 @@ from core.views import (
 
 class PlaylistListView(SonoraAPIView):
     serializer_class = PlaylistSerializer
+    parser_classes = [JSONParser]
 
     def get(self, request: Request) -> Response:
         playlists = (
@@ -61,6 +63,7 @@ class PlaylistListView(SonoraAPIView):
 
 class PlaylistDetailView(SonoraAPIView):
     serializer_class = PlaylistSerializer
+    parser_classes = [JSONParser]
 
     def get_playlist(self, request: Request, pk: str) -> Playlist:
         playlist = get_object_or_404(Playlist, pk=pk)

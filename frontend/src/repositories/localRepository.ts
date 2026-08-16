@@ -19,6 +19,7 @@ import type {
   Payout,
   QueueState,
   RegistrationInput,
+  Release,
   SubscriptionPlan,
   Ticket,
   TrackView,
@@ -431,6 +432,12 @@ export const localRepository = {
     user: User;
     profile: PublicProfile;
     playlists: Playlist[];
+    releases: Release[];
+    artistStats: {
+      uniqueListeners: number;
+      streams: number;
+      releases: number;
+    } | null;
   } | null {
     const db = load();
     const viewer = this.sessionUser();
@@ -438,6 +445,21 @@ export const localRepository = {
       (candidate) => candidate.username === username && !candidate.deletedAt,
     );
     if (!user || user.kind !== "consumer") return null;
+    const ownedReleases = user.artistProfile
+      ? db.releases.filter(
+          (release) =>
+            release.ownerUserId === user.id &&
+            (release.status === "published" || release.status === "scheduled"),
+        )
+      : [];
+    const ownedTracks = db.tracks.filter((track) =>
+      ownedReleases.some((release) => release.id === track.releaseId),
+    );
+    const showStats =
+      Boolean(user.artistProfile) &&
+      Boolean(viewer) &&
+      (viewer!.subscription.tier === "gold" ||
+        viewer!.kind === "admin");
     return {
       user: structuredClone(user),
       profile: publicProfile(user, viewer, db),
@@ -447,6 +469,20 @@ export const localRepository = {
             playlist.ownerId === user.id && playlist.visibility === "public",
         ),
       ),
+      releases: structuredClone(ownedReleases),
+      artistStats: showStats
+        ? {
+            uniqueListeners: ownedTracks.reduce(
+              (sum, track) => sum + track.uniqueListenerCount,
+              0,
+            ),
+            streams: ownedTracks.reduce(
+              (sum, track) => sum + track.streamCount,
+              0,
+            ),
+            releases: ownedReleases.length,
+          }
+        : null,
     };
   },
   follow(userId: string): void {
@@ -1009,6 +1045,27 @@ export const localRepository = {
       after: request.status,
       createdAt: request.decidedAt,
       requestId: id("req"),
+    });
+    db.notifications.push({
+      id: id("notice"),
+      userId: request.userId,
+      title: approved ? "Verification approved" : "Verification rejected",
+      body: approved
+        ? "Your artist account is verified. You can publish releases in Studio."
+        : reason || "Your verification request was rejected.",
+      titleKey: approved
+        ? "noticeVerificationApprovedTitle"
+        : "noticeVerificationRejectedTitle",
+      bodyKey: approved
+        ? "noticeVerificationApprovedBody"
+        : "noticeVerificationRejectedBody",
+      values: {
+        reason: reason || "No reason provided.",
+        link: "/studio",
+      },
+      kind: "critical",
+      readAt: null,
+      createdAt: request.decidedAt,
     });
     save(db);
   },

@@ -12,14 +12,18 @@ from accounts.models import (
     User,
 )
 from playlists.models import Playlist
+from catalog.models import Release
 from accounts.serializers import (
     ActiveSubscriptionSerializer,
     ArtistOwnerSerializer,
     PublicProfileSerializer,
 )
 from playlists.serializers import PlaylistSerializer
+from catalog.serializers import ReleaseSerializer
+from catalog.services.artist import public_artist_listening_stats
 from catalog.services.playback import listening_stats
 from core.services.access import active_subscription
+from billing.models import Subscription
 from core.views import SonoraAPIView
 
 
@@ -74,10 +78,31 @@ class ProfileView(SonoraAPIView):
                     "listeningStats": listening_stats(user),
                 }
             )
+        releases: list = []
+        artist_stats = None
+        if hasattr(user, "artist_profile"):
+            release_qs = (
+                Release.objects.filter(
+                    owner=user,
+                    status__in=[Release.Status.PUBLISHED, Release.Status.SCHEDULED],
+                )
+                .select_related("owner__artist_profile")
+                .prefetch_related("tracks__credits__artist__user")
+                .order_by("-public_release_at")
+            )
+            releases = ReleaseSerializer(
+                list(release_qs), many=True, context={"request": request, "viewer": request.user}
+            ).data
+            if request.user.is_authenticated:
+                viewer_tier = active_subscription(request.user).tier
+                if viewer_tier == Subscription.Tier.GOLD or request.user.kind == User.Kind.ADMIN:
+                    artist_stats = public_artist_listening_stats(user)
         payload = {
             "user": public_user,
             "profile": public,
             "playlists": PlaylistSerializer(playlists, many=True, context=ctx).data,
+            "releases": releases,
+            "artistStats": artist_stats,
             "followers": PublicProfileSerializer(follower_users, many=True, context=ctx).data,
             "following": PublicProfileSerializer(following_users, many=True, context=ctx).data,
         }

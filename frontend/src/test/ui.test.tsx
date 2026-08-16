@@ -203,7 +203,7 @@ describe("critical UI flows", () => {
       "utf8",
     );
     const serializers = readFileSync(
-      join(process.cwd(), "..", "backend", "api", "serializers", "catalog.py"),
+      join(process.cwd(), "..", "backend", "catalog", "serializers.py"),
       "utf8",
     );
     expect(trackRow).toContain("downloadSource");

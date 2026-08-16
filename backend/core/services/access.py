@@ -17,6 +17,11 @@ from core.services.common import BASIC_DAILY_STREAM_LIMIT, is_early_access_activ
 
 def active_subscription(user: User) -> Subscription:
     """Return the user's current plan, expiring paid tiers to Basic when due."""
+    from datetime import timedelta
+
+    from notifications.models import Notification
+    from notifications.services import create_notification
+
     sub = (
         user.subscriptions.filter(status=Subscription.Status.ACTIVE).order_by("-starts_at").first()
     )
@@ -27,9 +32,44 @@ def active_subscription(user: User) -> Subscription:
         and sub.expires_at is not None
         and sub.expires_at <= now_utc()
     ):
+        tier = sub.tier
         sub.status = Subscription.Status.EXPIRED
         sub.save(update_fields=["status", "updated_at"])
+        create_notification(
+            user,
+            "Subscription expired",
+            f"Your {tier} plan ended. You are back on Basic.",
+            Notification.Kind.CRITICAL,
+            "noticeSubscriptionExpiredTitle",
+            "noticeSubscriptionExpiredBody",
+            {"tier": tier.title(), "link": "/settings"},
+        )
         return Subscription.basic_for(user)
+    if (
+        sub.tier != Subscription.Tier.BASIC
+        and sub.expires_at is not None
+        and now_utc() < sub.expires_at <= now_utc() + timedelta(days=7)
+    ):
+        already = user.notifications.filter(
+            title_key="noticeSubscriptionExpiringTitle",
+            values__subscriptionId=str(sub.id),
+        ).exists()
+        if not already:
+            days = max(1, (sub.expires_at - now_utc()).days)
+            create_notification(
+                user,
+                "Subscription ending soon",
+                f"Your {sub.tier} plan ends in {days} day(s).",
+                Notification.Kind.IMPORTANT,
+                "noticeSubscriptionExpiringTitle",
+                "noticeSubscriptionExpiringBody",
+                {
+                    "tier": sub.tier.title(),
+                    "days": days,
+                    "subscriptionId": str(sub.id),
+                    "link": "/settings",
+                },
+            )
     return sub
 
 

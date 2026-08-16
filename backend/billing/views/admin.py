@@ -21,7 +21,8 @@ from core.views import (
     page,
     request_id,
 )
-from notifications.services import create_audit
+from notifications.models import Notification
+from notifications.services import create_audit, create_notification
 
 
 class AdminPlansView(SonoraAPIView):
@@ -103,5 +104,19 @@ class PayoutSettleView(SonoraAPIView):
             before,
             {"status": payout.status},
             request_id(request),
+        )
+        artist_user = payout.artist.user
+        create_notification(
+            artist_user,
+            "Monthly payout settled",
+            f"Your reward for {payout.period} was marked settled.",
+            Notification.Kind.IMPORTANT,
+            "noticePayoutSettledTitle",
+            "noticePayoutSettledBody",
+            {
+                "period": payout.period,
+                "amount": payout.amount_rial,
+                "link": "/studio",
+            },
         )
         return Response(page(sync_artist_ledger()))

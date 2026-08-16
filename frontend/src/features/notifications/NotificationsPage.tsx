@@ -9,6 +9,7 @@ import {
 } from "lucide-react";
 import { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
+import { Link } from "react-router-dom";
 import { EmptyState } from "../../components/EmptyState";
 import type { Notification } from "../../domain/types";
 import { repository } from "../../repositories/localRepository";
@@ -20,6 +21,11 @@ const kindIcon: Record<Notification["kind"], typeof Bell> = {
   critical: ShieldAlert,
   important: Bell,
 };
+
+function noticeLink(notice: Notification): string | null {
+  const raw = notice.values?.link;
+  return typeof raw === "string" && raw.startsWith("/") ? raw : null;
+}
 
 export function NotificationsPage() {
   const { t } = useTranslation();
@@ -61,6 +67,7 @@ export function NotificationsPage() {
             const title = text(notice.titleKey, notice.title, notice.values);
             const body = text(notice.bodyKey, notice.body, notice.values);
             const expanded = expandedId === notice.id;
+            const href = noticeLink(notice);
             return (
               <article
                 key={notice.id}
@@ -104,6 +111,18 @@ export function NotificationsPage() {
                   </div>
                   <h2 title={expanded ? undefined : title}>{title}</h2>
                   <p title={expanded ? undefined : body}>{body}</p>
+                  {href && (
+                    <Link
+                      className="notification-link"
+                      to={href}
+                      onClick={(event) => {
+                        event.stopPropagation();
+                        if (unread) repository.readNotification(notice.id);
+                      }}
+                    >
+                      {t("openNotification")}
+                    </Link>
+                  )}
                 </div>
                 <div
                   className="notice-actions"
@@ -120,9 +139,9 @@ export function NotificationsPage() {
                     </button>
                   )}
                   <button
-                    className="icon-button danger"
+                    className="icon-button"
                     onClick={() => repository.deleteNotification(notice.id)}
-                    aria-label={t("remove")}
+                    aria-label={t("delete")}
                   >
                     <Trash2 />
                   </button>
@@ -134,8 +153,8 @@ export function NotificationsPage() {
       ) : (
         <EmptyState
           icon={Bell}
-          title={t("notificationEmpty")}
-          body={t("notificationEmptyBody")}
+          title={t("emptyNotifications")}
+          body={t("emptyNotificationsBody")}
         />
       )}
     </div>

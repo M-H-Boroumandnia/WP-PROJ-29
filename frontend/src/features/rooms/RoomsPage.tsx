@@ -1,4 +1,6 @@
 import {
+  Check,
+  Copy,
   Crown,
   Headphones,
   Link2,
@@ -14,21 +16,84 @@ import {
 } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
-import {
-  ParticipantAccessState,
-  ParticipantOrbit,
-} from "../../components/RoomPrimitives";
+import { ParticipantAccessState } from "../../components/RoomPrimitives";
 import { canUseRooms } from "../../domain/entitlements";
-import type { ListeningRoom } from "../../domain/types";
+import type { ListeningRoom, TrackView } from "../../domain/types";
 import { repository } from "../../repositories/localRepository";
+import { usePlayer } from "../../store/player";
 import { useDatabaseVersion, useSession } from "../../store/session";
+
+const ROOM_INVITE_KEY = "sonora.activeRoomInvite";
 
 type RoomApi = {
   createRoom?: () => Promise<ListeningRoom>;
   joinRoom?: (inviteCode: string) => Promise<ListeningRoom>;
+  getRoom?: (inviteCode: string) => Promise<ListeningRoom>;
   addRoomTrack?: (roomId: string, trackId: string) => Promise<ListeningRoom>;
   roomSocketUrl?: (inviteCode: string) => string;
+  loadTracksByIds?: (ids: string[]) => Promise<void>;
 };
+
+function rememberInvite(code: string | null) {
+  try {
+    if (code) sessionStorage.setItem(ROOM_INVITE_KEY, code);
+    else sessionStorage.removeItem(ROOM_INVITE_KEY);
+  } catch {
+    // sessionStorage may be unavailable
+  }
+}
+
+function rememberedInvite() {
+  try {
+    return sessionStorage.getItem(ROOM_INVITE_KEY)?.trim().toUpperCase() || "";
+  } catch {
+    return "";
+  }
+}
+
+function syncRoomPlayback(
+  room: ListeningRoom,
+  tracks: TrackView[],
+  locallyPlayable: boolean,
+) {
+  const trackIds = room.queue.map((item) => item.trackId);
+  const currentIndex = trackIds.length
+    ? Math.max(
+        0,
+        room.queue.findIndex((item) => item.id === room.currentQueueItemId),
+      )
+    : -1;
+  const wantPlaying = Boolean(
+    room.isPlaying && locallyPlayable && currentIndex >= 0,
+  );
+  const currentId = currentIndex >= 0 ? trackIds[currentIndex] : null;
+  const locked = currentId
+    ? tracks.find((track) => track.id === currentId)?.isPlayableForViewer ===
+      false
+    : false;
+  const playing = wantPlaying && !locked;
+  const player = usePlayer.getState();
+  const queueChanged =
+    player.trackIds.length !== trackIds.length ||
+    player.trackIds.some((id, index) => id !== trackIds[index]);
+  const trackChanged = queueChanged || player.currentIndex !== currentIndex;
+
+  usePlayer.setState({
+    trackIds,
+    currentIndex,
+    isPlaying: playing,
+    shuffleEnabled: room.shuffleEnabled,
+    repeatMode: room.repeatMode,
+    gestureRequired: false,
+    ...(trackChanged
+      ? {
+          position: room.positionSeconds || 0,
+          playbackNonce: player.playbackNonce + 1,
+          failureCount: 0,
+        }
+      : {}),
+  });
+}
 
 export function RoomsPage() {
   const { t } = useTranslation();
@@ -41,7 +106,30 @@ export function RoomsPage() {
   const [trackId, setTrackId] = useState("");
   const [error, setError] = useState("");
   const [reaction, setReaction] = useState<string | null>(null);
+  const [copied, setCopied] = useState(false);
   const socket = useRef<WebSocket | null>(null);
+  const restoring = useRef(false);
+
+  useEffect(() => {
+    void repository.loadCatalogData?.();
+  }, []);
+
+  useEffect(() => {
+    const code = rememberedInvite();
+    if (!code || !api.joinRoom || restoring.current) return;
+    restoring.current = true;
+    api
+      .joinRoom(code)
+      .then((restored) => {
+        setRoom(restored);
+        rememberInvite(restored.inviteCode);
+      })
+      .catch(() => rememberInvite(null))
+      .finally(() => {
+        restoring.current = false;
+      });
+  }, [api]);
+
   const current = useMemo(
     () =>
       tracks.find(
@@ -56,6 +144,17 @@ export function RoomsPage() {
     (participant) => participant.userId === user.id,
   );
   const canControl = Boolean(me?.isHost || me?.canControl);
+  const locallyPlayable = me?.accessState === "playable";
+
+  useEffect(() => {
+    if (!room?.queue.length) return;
+    void api.loadTracksByIds?.(room.queue.map((item) => item.trackId));
+  }, [api, room?.queue]);
+
+  useEffect(() => {
+    if (!room) return;
+    syncRoomPlayback(room, tracks, locallyPlayable);
+  }, [room, tracks, locallyPlayable]);
 
   useEffect(() => {
     if (!room?.inviteCode || !api.roomSocketUrl) return;
@@ -69,35 +168,80 @@ export function RoomsPage() {
         userId?: string;
         payload?: { emoji?: string };
       };
-      if (payload.room) setRoom(payload.room);
+      if (payload.room) {
+        setRoom(payload.room);
+        rememberInvite(payload.room.inviteCode);
+      }
       if (payload.type === "reaction" && payload.payload?.emoji) {
         setReaction(payload.payload.emoji);
         window.setTimeout(() => setReaction(null), 1400);
       }
     };
     ws.onerror = () => setError(t("roomConnectionError"));
-    return () => ws.close();
+    return () => {
+      ws.close();
+      if (socket.current === ws) socket.current = null;
+    };
   }, [api, room?.inviteCode, t]);
 
-  const send = (type: string, payload: Record<string, unknown> = {}) =>
-    socket.current?.readyState === WebSocket.OPEN &&
-    socket.current.send(JSON.stringify({ type, payload }));
+  const send = (type: string, payload: Record<string, unknown> = {}) => {
+    const ws = socket.current;
+    if (!ws) return;
+    const body = JSON.stringify({ type, payload });
+    if (ws.readyState === WebSocket.OPEN) {
+      ws.send(body);
+      return;
+    }
+    if (ws.readyState === WebSocket.CONNECTING) {
+      ws.addEventListener("open", () => ws.send(body), { once: true });
+    }
+  };
+  const enterRoom = (next: ListeningRoom) => {
+    setRoom(next);
+    rememberInvite(next.inviteCode);
+    setError("");
+  };
   const create = () =>
     api
       .createRoom?.()
-      .then(setRoom)
+      .then(enterRoom)
       .catch((reason) => setError(reason.message ?? t("error")));
   const join = () =>
     api
       .joinRoom?.(invite)
-      .then(setRoom)
+      .then(enterRoom)
       .catch((reason) => setError(reason.message ?? t("error")));
   const addTrack = () => {
     if (!room || !trackId) return;
     api
       .addRoomTrack?.(room.id, trackId)
-      .then(setRoom)
+      .then(enterRoom)
       .catch((reason) => setError(reason.message ?? t("error")));
+  };
+  const copyInvite = async () => {
+    if (!room?.inviteCode) return;
+    try {
+      await navigator.clipboard.writeText(room.inviteCode);
+      setCopied(true);
+      window.setTimeout(() => setCopied(false), 1600);
+    } catch {
+      setError(t("error"));
+    }
+  };
+  const togglePlayback = () => {
+    if (!room?.currentQueueItemId) {
+      setError(t("queueEmptyBody"));
+      return;
+    }
+    // Optimistic local start so the click gesture unlocks audio immediately.
+    if (!room.isPlaying && locallyPlayable && current?.isPlayableForViewer) {
+      syncRoomPlayback(
+        { ...room, isPlaying: true },
+        tracks,
+        locallyPlayable,
+      );
+    }
+    send(room.isPlaying ? "pause" : "play");
   };
 
   if (!canUseRooms(user.subscription.tier))
@@ -155,14 +299,56 @@ export function RoomsPage() {
       {room ? (
         <section className="room-stage">
           <div className="room-now">
-            <ParticipantOrbit participants={room.participants} />
             {reaction && <span className="room-reaction">{reaction}</span>}
             <div>
-              <span className="eyebrow">
-                {t("inviteCode")}: {room.inviteCode}
-              </span>
-              <h2>{current?.title ?? t("queueEmpty")}</h2>
-              <p>{current?.artists[0]?.stageName ?? t("queueEmptyBody")}</p>
+              <div className="room-now-top">
+                <h2 className={current ? undefined : "room-now-empty"}>
+                  {current ? (
+                    current.title
+                  ) : (
+                    <>
+                      {t("queueEmpty")}{" "}
+                      <button
+                        type="button"
+                        className="room-invite-inline"
+                        onClick={() => void copyInvite()}
+                        title={
+                          copied
+                            ? t("inviteCopied")
+                            : `${t("inviteCode")}: ${room.inviteCode}`
+                        }
+                        aria-label={
+                          copied ? t("inviteCopied") : t("copyInviteCode")
+                        }
+                      >
+                        {room.inviteCode}
+                        {copied ? <Check /> : <Copy />}
+                      </button>
+                    </>
+                  )}
+                </h2>
+                {current && (
+                  <button
+                    type="button"
+                    className="room-invite-code"
+                    onClick={() => void copyInvite()}
+                    title={
+                      copied
+                        ? t("inviteCopied")
+                        : `${t("inviteCode")}: ${room.inviteCode}`
+                    }
+                    aria-label={
+                      copied ? t("inviteCopied") : t("copyInviteCode")
+                    }
+                  >
+                    <strong className="room-invite-value">{room.inviteCode}</strong>
+                    {copied ? <Check /> : <Copy />}
+                  </button>
+                )}
+              </div>
+              <p className={current ? undefined : "muted"}>
+                {current?.artists[0]?.stageName ?? t("queueEmptyBody")}
+              </p>
               {me?.accessState !== "playable" && (
                 <div className="locked-card compact">
                   <LockKeyhole />
@@ -175,7 +361,7 @@ export function RoomsPage() {
             <button
               className="main-play"
               disabled={!canControl}
-              onClick={() => send(room.isPlaying ? "pause" : "play")}
+              onClick={togglePlayback}
             >
               {room.isPlaying ? (
                 <Pause fill="currentColor" />

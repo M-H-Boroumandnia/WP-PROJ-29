@@ -71,10 +71,25 @@ class VerificationDecisionView(SonoraAPIView):
             {"status": req.status, "reason": req.reason},
             request_id(request),
         )
-        create_notification(
-            req.artist.user,
-            "Verification decision",
-            req.reason or req.status,
-            Notification.Kind.CRITICAL,
-        )
+        reason = (req.reason or "").strip()
+        if approved:
+            create_notification(
+                req.artist.user,
+                "Verification approved",
+                "Your artist account is verified. You can publish releases in Studio.",
+                Notification.Kind.CRITICAL,
+                "noticeVerificationApprovedTitle",
+                "noticeVerificationApprovedBody",
+                {"reason": reason, "link": "/studio"},
+            )
+        else:
+            create_notification(
+                req.artist.user,
+                "Verification rejected",
+                reason or "Your verification request was rejected.",
+                Notification.Kind.CRITICAL,
+                "noticeVerificationRejectedTitle",
+                "noticeVerificationRejectedBody",
+                {"reason": reason or "No reason provided.", "link": "/studio"},
+            )
         return Response(VerificationRequestSerializer(req).data)

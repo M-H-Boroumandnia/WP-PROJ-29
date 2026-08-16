@@ -216,6 +216,11 @@ export function createDjangoApiRepository(
   const grants = new Map<string, PlaybackGrant>();
   const inFlight = new Map<string, Promise<unknown>>();
   const profilePlaylists = new Map<string, Playlist[]>();
+  const profileReleases = new Map<string, Release[]>();
+  const profileArtistStats = new Map<
+    string,
+    { uniqueListeners: number; streams: number; releases: number } | null
+  >();
   let studioLoaded = false;
   let queueSaveTimer: ReturnType<typeof setTimeout> | null = null;
   const emptyQueue = (): QueueState => ({
@@ -254,6 +259,8 @@ export function createDjangoApiRepository(
     storeRefreshToken(null);
     localStorage.removeItem("sonora:api:active-user");
     profilePlaylists.clear();
+    profileReleases.clear();
+    profileArtistStats.clear();
   };
   const notify = () => {
     revision += 1;
@@ -320,6 +327,12 @@ export function createDjangoApiRepository(
     user: Partial<User>;
     profile: PublicProfile;
     playlists: Playlist[];
+    releases?: Release[];
+    artistStats?: {
+      uniqueListeners: number;
+      streams: number;
+      releases: number;
+    } | null;
     followers?: PublicProfile[];
     following?: PublicProfile[];
   }) => {
@@ -421,6 +434,20 @@ export function createDjangoApiRepository(
       payload.profile.username,
       payload.playlists.filter((playlist) => playlist.visibility === "public"),
     );
+    const artistReleases = payload.releases ?? [];
+    profileReleases.set(payload.profile.username, artistReleases);
+    profileArtistStats.set(
+      payload.profile.username,
+      payload.artistStats ?? null,
+    );
+    if (artistReleases.length) {
+      cache.releases = [
+        ...artistReleases,
+        ...cache.releases.filter(
+          (release) => !artistReleases.some((item) => item.id === release.id),
+        ),
+      ];
+    }
   };
 
   const loadProfileData = async (username: string) => {
@@ -433,6 +460,12 @@ export function createDjangoApiRepository(
         user: Partial<User>;
         profile: PublicProfile;
         playlists: Playlist[];
+        releases?: Release[];
+        artistStats?: {
+          uniqueListeners: number;
+          streams: number;
+          releases: number;
+        } | null;
         followers?: PublicProfile[];
         following?: PublicProfile[];
       }>(`/profiles/${username}/`);
@@ -1155,6 +1188,10 @@ export function createDjangoApiRepository(
             .length,
         },
         playlists: clone(profilePlaylists.get(user.username) ?? []),
+        releases: clone(profileReleases.get(user.username) ?? []),
+        artistStats: profileArtistStats.has(user.username)
+          ? clone(profileArtistStats.get(user.username) ?? null)
+          : null,
       };
     },
     follow(userId: string) {

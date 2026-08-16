@@ -229,9 +229,17 @@ export function Player() {
               <CoverArt src={track.coverUrl} alt="" />
               <div>
                 <strong>{track.title}</strong>
-                <Link to={`/artist/${track.artists[0].username}`}>
-                  {track.artists[0].stageName}
-                </Link>
+                <span className="player-meta-links">
+                  <Link to={`/artist/${track.artists[0].username}`}>
+                    {track.artists[0].stageName}
+                  </Link>
+                  {track.releaseId ? (
+                    <>
+                      <span className="media-dot">·</span>
+                      <Link to={`/release/${track.releaseId}`}>{t("album")}</Link>
+                    </>
+                  ) : null}
+                </span>
                 {showGoldStats && (
                   <span className="player-gold-stats">
                     {formatCount(track.uniqueListenerCount)} {t("listeners")}
@@ -461,9 +469,17 @@ export function Player() {
           <div className="full-track-copy">
             <div>
               <h2>{track.title}</h2>
-              <Link to={`/artist/${track.artists[0].username}`}>
-                {track.artists[0].stageName}
-              </Link>
+              <span className="player-meta-links">
+                <Link to={`/artist/${track.artists[0].username}`}>
+                  {track.artists[0].stageName}
+                </Link>
+                {track.releaseId ? (
+                  <>
+                    <span className="media-dot">·</span>
+                    <Link to={`/release/${track.releaseId}`}>{t("album")}</Link>
+                  </>
+                ) : null}
+              </span>
               {showGoldStats && (
                 <span className="player-gold-stats">
                   {formatCount(track.uniqueListenerCount)} {t("listeners")}
